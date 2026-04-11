@@ -19,7 +19,7 @@ use crate::matches;
 /// To create `Authority` use one of the `Authority::from_*` method:
 ///
 /// ```
-/// use tsue::http::Authority;
+/// use seryu::http::Authority;
 /// let auth = Authority::from_bytes("example.com:80").unwrap();
 /// assert_eq!(auth.as_str(), "example.com:80");
 /// assert_eq!(auth.host(), "example.com");

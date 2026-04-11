@@ -29,7 +29,7 @@ impl StatusCode {
     /// # Examples
     ///
     /// ```
-    /// use tsue::http::StatusCode;
+    /// use seryu::http::StatusCode;
     ///
     /// let status = StatusCode::OK;
     /// assert_eq!(status.as_u16(), 200);
@@ -44,7 +44,7 @@ impl StatusCode {
     /// # Examples
     ///
     /// ```
-    /// use tsue::http::StatusCode;
+    /// use seryu::http::StatusCode;
     ///
     /// let status = StatusCode::OK;
     /// assert_eq!(status.code_str(), "200");
@@ -59,7 +59,7 @@ impl StatusCode {
     /// # Examples
     ///
     /// ```
-    /// use tsue::http::StatusCode;
+    /// use seryu::http::StatusCode;
     ///
     /// let status = StatusCode::OK;
     /// assert_eq!(status.reason(), "OK");
@@ -74,7 +74,7 @@ impl StatusCode {
     /// # Examples
     ///
     /// ```
-    /// use tsue::http::StatusCode;
+    /// use seryu::http::StatusCode;
     ///
     /// let status = StatusCode::OK;
     /// assert_eq!(status.as_str(), "200 OK");

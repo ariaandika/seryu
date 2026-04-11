@@ -233,7 +233,7 @@ impl HeaderMap {
     /// Returns a reference to the first header value corresponding to the given header name.
     ///
     /// ```rust
-    /// use tsue::headers::{standard::{CONTENT_TYPE, DATE}, HeaderMap, HeaderValue};
+    /// use seryu::headers::{standard::{CONTENT_TYPE, DATE}, HeaderMap, HeaderValue};
     ///
     /// let mut map = HeaderMap::new();
     /// map.insert(CONTENT_TYPE, HeaderValue::from_static(b"text/html"));

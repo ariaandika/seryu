@@ -26,7 +26,7 @@ use crate::http::{authority, target};
 /// ```
 ///
 /// ```rust
-/// use tsue::http::HttpUri;
+/// use seryu::http::HttpUri;
 ///
 /// let uri = HttpUri::from_bytes("https://example.com:80/over/there?name=ferret").unwrap();
 /// assert!(uri.is_https());

@@ -12,7 +12,7 @@
 //! #     fn cookie2(&self) -> String { "c1".to_string() }
 //! # }
 //! # let user = User;
-//! use tsue::headers::{
+//! use seryu::headers::{
 //!     HeaderMap,
 //!     standard::{CONTENT_TYPE, CONTENT_LENGTH, COOKIE},
 //!     HeaderValue,

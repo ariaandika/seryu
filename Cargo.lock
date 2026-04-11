@@ -7,12 +7,6 @@ name = "codegen"
 version = "0.1.0"
 
 [[package]]
-name = "futures-core"
-version = "0.3.31"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05f29059c0c2090612e8d742178b0580d2dc940c837851ad723096f87af6663e"
-
-[[package]]
 name = "libc"
 version = "0.2.177"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -40,6 +34,15 @@ name = "pin-project-lite"
 version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3b3cff922bd51709b605d9ead9aa71031d81447142d828eb4a6eba76fe619f9b"
+
+[[package]]
+name = "seryu"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "tcio",
+ "tokio",
+]
 
 [[package]]
 name = "socket2"
@@ -70,16 +73,6 @@ dependencies = [
  "pin-project-lite",
  "socket2",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "tsue"
-version = "0.1.0"
-dependencies = [
- "futures-core",
- "log",
- "tcio",
- "tokio",
 ]
 
 [[package]]

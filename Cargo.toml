@@ -1,10 +1,9 @@
 [package]
-name = "tsue"
+name = "seryu"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-futures-core = { version = "0.3.31" }
 tcio = { git = "https://github.com/ariaandika/tcio", features = ["tokio"] }
 tokio = { version = "1.46.1", features = ["net", "sync", "rt"] }
 
