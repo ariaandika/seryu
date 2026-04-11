@@ -47,6 +47,7 @@ mod matches;
 pub use tcio::bytes;
 
 // definitions
+// FIXME: use the new header map implementation
 pub mod headers;
 pub mod http;
 pub mod body;

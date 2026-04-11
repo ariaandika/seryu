@@ -363,6 +363,16 @@ impl HeaderMap {
             )
         }
     }
+
+    #[cfg(test)]
+    const fn hash_table(&self) -> &[HashIdx] {
+        unsafe {
+            slice::from_raw_parts(
+                self.fields.cast().as_ptr(),
+                alloc::hash_field_cap(alloc::offset(self.cap)),
+            )
+        }
+    }
 }
 
 // ===== Implementation =====
@@ -836,64 +846,175 @@ mod alloc {
     }
 }
 
-#[test]
-fn test_zeroed_hash_idx() {
-    // `allocate` use zero bytes write to initialized the hash table
-    unsafe { assert_eq!(None::<HashIdx>, std::mem::zeroed()) };
-}
-
-#[test]
+#[cfg(test)]
 #[allow(clippy::borrow_interior_mutable_const)]
 #[allow(clippy::declare_interior_mutable_const)]
-fn test_header_map() {
-    use super::name::standard as s;
+mod test {
+    use std::ptr::NonNull;
+    use crate::headers::name::standard as s;
+    use super::*;
+
+    macro_rules! assert_field {
+        ($map:ident, $fields:expr) => {
+            assert!(
+                $map
+                    .fields()
+                    .iter()
+                    .map(|e| e.name())
+                    .zip($fields)
+                    .all(|(m, n)| m == n)
+            );
+        };
+    }
+
+    #[allow(unused)]
+    macro_rules! dbg_map {
+        ($map:ident, $($tt:tt)*) => {{
+            println!("==={}({})===",$map.len(), $($tt)*);
+            let offset = alloc::offset($map.cap);
+            let cap = alloc::hash_field_cap(offset);
+
+            for f in $map.hash_table() {
+                print!("{f:?}");
+                if let Some(f) = f {
+                    print!(" ({})", f.hash % cap as u32);
+                }
+                println!();
+            }
+            for f in $map.fields() {
+                let hash = f.name().hash();
+                println!("{f:?} ({hash}#{})", hash % cap as u32);
+            }
+            println!("=====");
+        }};
+    }
 
     const FOO: HeaderValue = HeaderValue::from_static(b"FOO");
 
-    // dangling ptr
-    drop(HeaderMap::new());
+    const fn is_send_sync<T: Send + Sync>() {}
+    const _: () = is_send_sync::<HeaderMap>();
 
-    let mut map = HeaderMap::new();
+    #[test]
+    fn test_zeroed_hash_idx() {
+        let mut mem = HeaderField::new(s::HOST, FOO);
 
-    assert!(map.insert(s::DATE, FOO).is_none());
-    assert!(map.contains_key(&s::DATE));
+        let ptr = NonNull::from_mut(&mut mem);
 
-    let field = map.insert(s::DATE, FOO).unwrap();
-    assert!(map.contains_key(&s::DATE));
-    assert_eq!(field.name(), &s::DATE);
-    assert_eq!(field.value(), &FOO);
+        unsafe {
+            // `allocate` use zero bytes write to initialized the hash table
+            std::ptr::write_bytes(ptr.as_ptr(), 0, 1);
 
-    assert!(map.insert(s::AGE, FOO).is_none());
-    assert!(map.insert(s::HOST, FOO).is_none());
-    assert!(map.insert(s::ACCEPT, FOO).is_none());
-    assert!(map.insert(s::TE, FOO).is_none());
-    assert!(map.insert(s::CONTENT_TYPE, FOO).is_none());
-    assert!(map.insert(s::CONTENT_LENGTH, FOO).is_none());
-
-    let len = map.len();
-
-    map.append(s::DATE, FOO);
-    assert!(map.contains_key(&s::DATE));
-
-    assert_eq!(map.len(), len + 1);
-
-    // let mut fields = map.get_all(&s::DATE);
-    // assert_eq!(fields.next(), Some(&FOO));
-    // assert_eq!(fields.next(), Some(&FOO));
-    // assert!(fields.next().is_none());
-
-    let mut i = 0;
-    for field in map.iter() {
-        assert!(matches!(field.name().as_str(), "date" | "age" | "host" | "accept" | "te" | "content-type" | "content-length"));
-        i += 1;
+            for i in 0..alloc::OFFSET_SCALE {
+                assert_eq!(ptr.cast::<HashIdx>().add(i).as_ref(), &None);
+            }
+        }
     }
-    assert_eq!(map.len(), i);
 
-    // let field = map.remove(s::HOST).unwrap();
-    // assert!(!map.contains_key(s::HOST));
-    // assert_eq!(field.into_parts(), (s::HOST, FOO));
-    //
-    // let field = map.remove(s::DATE).unwrap();
-    // assert!(map.contains_key(s::DATE));
-    // assert_eq!(field.into_parts(), (s::DATE, FOO));
+    #[test]
+    fn test_empty() {
+        // dangling ptr
+        drop(HeaderMap::new());
+
+        drop(HeaderMap::with_capacity_size(8));
+
+        let mut map = HeaderMap::new();
+        map.reserve(7);
+    }
+
+    #[test]
+    fn test_insert() {
+        test_insert_impl(&mut HeaderMap::new());
+        test_insert_impl(&mut HeaderMap::with_capacity(8));
+    }
+
+    #[test]
+    fn test_append() {
+        let mut map = HeaderMap::new();
+        map.append(s::DATE, FOO);
+        map.append(s::DATE, FOO);
+        // map.get_all(&s::DATE);
+        assert_eq!(map.len(), 2);
+        assert_field!(map, &[s::DATE, s::DATE]);
+    }
+
+    #[test]
+    fn test_remove() {
+        let mut map = HeaderMap::new();
+        map.insert(s::DATE, FOO);
+        test_remove_impl(&mut map);
+        drop(map);
+
+        let mut map = build_map();
+        test_remove_impl(&mut map);
+        drop(map);
+
+        let mut map = build_map();
+        map.append(s::DATE, FOO);
+        test_remove_impl(&mut map);
+        drop(map);
+    }
+
+    #[test]
+    fn test_swap_remove() {
+        let mut map = HeaderMap::new();
+        map.insert(s::DATE, FOO);
+        test_swap_remove_impl(&mut map);
+        drop(map);
+
+        let mut map = build_map();
+        test_swap_remove_impl(&mut map);
+        drop(map);
+
+        let mut map = build_map();
+        map.append(s::DATE, FOO);
+        test_swap_remove_impl(&mut map);
+        drop(map);
+    }
+
+    fn build_map() -> HeaderMap {
+        let mut map = HeaderMap::new();
+        test_insert_impl(&mut map);
+        map
+    }
+
+    fn test_insert_impl(map: &mut HeaderMap) {
+        const NAMES: &[HeaderName] = &[
+            s::ACCEPT,
+            s::AGE,
+            s::ALLOW,
+            s::COOKIE,
+            s::CONTENT_LENGTH,
+            s::CONTENT_TYPE,
+            s::DATE,
+            s::HOST,
+            s::TE,
+            s::USER_AGENT,
+        ];
+
+        for name in NAMES {
+            assert!(map.insert(name.clone(), FOO).is_none());
+            assert!(map.contains_key(name));
+            map.fields();
+            map.hash_table();
+        }
+
+        assert_field!(map, NAMES);
+    }
+
+    fn test_remove_impl(map: &mut HeaderMap) {
+        let len = map.len();
+        let field = map.remove(&s::DATE).unwrap();
+        assert_eq!(field.name(), &s::DATE);
+        assert_eq!(field.value(), &FOO);
+        assert_eq!(map.len(), len - 1);
+    }
+
+    fn test_swap_remove_impl(map: &mut HeaderMap) {
+        let len = map.len();
+        let field = map.swap_remove(&s::DATE).unwrap();
+        assert_eq!(field.name(), &s::DATE);
+        assert_eq!(field.value(), &FOO);
+        assert_eq!(map.len(), len - 1);
+    }
 }
+
