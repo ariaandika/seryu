@@ -1,37 +1,17 @@
 use crate::headers::{HeaderName, HeaderValue};
 
-type Size = u32;
-
 /// Header Field.
 ///
 /// Contains [`HeaderName`] and multiple [`HeaderValue`].
 #[derive(Clone)]
 pub struct HeaderField {
-    hash: Size,
     name: HeaderName,
     value: HeaderValue,
 }
 
 impl HeaderField {
     pub(crate) const fn new(name: HeaderName, value: HeaderValue) -> Self {
-        Self {
-            hash: name.hash(),
-            name,
-            value,
-        }
-    }
-
-    pub(crate) const fn with_hash(name: HeaderName, value: HeaderValue, hash: u32) -> Self {
-        Self {
-            hash,
-            name,
-            value,
-        }
-    }
-
-    /// name must be in lowercase
-    pub(crate) fn cached_hash(&self) -> Size {
-        self.hash
+        Self { name, value }
     }
 
     /// Returns reference to [`HeaderName`].

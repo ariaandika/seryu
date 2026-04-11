@@ -171,8 +171,8 @@ pub fn poll_request(
         };
 
         let value = HeaderValue::from_bytes(value)?;
-        let field = HeaderField::with_hash(name, value, hash);
-        let _ = session.headers.try_append_field(field);
+        let field = HeaderField::new(name, value);
+        let _ = session.headers.try_append_field(hash, field);
     }
 
     debug_assert_eq!(read_buffer.first_chunk(), Some(b"\r\n"));

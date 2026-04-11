@@ -68,18 +68,13 @@ pub(crate) mod matches;
 mod name;
 mod value;
 mod field;
-mod map;
-pub mod iter;
 
 #[doc(hidden)] // experimental
 pub mod map2;
-
-#[cfg(test)]
-mod test;
 
 pub mod error;
 
 pub use name::{HeaderName, standard, lookup};
 pub use value::HeaderValue;
 pub use field::HeaderField;
-pub use map::{HeaderMap, AsHeaderName, IntoHeaderName};
+pub use map2::HeaderMap;

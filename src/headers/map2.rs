@@ -3,7 +3,7 @@ use std::num::NonZeroU32;
 use std::{mem, ptr, slice};
 
 use crate::headers::error::TryReserveError;
-use crate::headers::{HeaderName, HeaderValue};
+use crate::headers::{HeaderField, HeaderName, HeaderValue};
 
 // space-time tradeoff
 // most of integer type is limited
@@ -26,31 +26,6 @@ pub struct HeaderMap {
     fields: ptr::NonNull<HeaderField>,
     len: Size,
     cap: Size,
-}
-
-use inner::HeaderField;
-mod inner {
-    use crate::headers::{HeaderName, HeaderValue};
-
-    #[derive(Debug, Clone)]
-    pub struct HeaderField {
-        name: HeaderName,
-        value: HeaderValue,
-    }
-
-    impl HeaderField {
-        pub fn new(name: HeaderName, value: HeaderValue) -> Self {
-            Self { name, value }
-        }
-
-        pub fn name(&self) -> &HeaderName {
-            &self.name
-        }
-
-        pub fn value(&self) -> &HeaderValue {
-            &self.value
-        }
-    }
 }
 
 type HashIdx = Option<HashField>;
@@ -249,13 +224,13 @@ impl HeaderMap {
         self.field(name.as_str(), name.hash()).map(HeaderField::value)
     }
 
-    // /// Returns an iterator to all header values corresponding to the given header name.
-    // ///
-    // /// Note that this is the result of duplicate header fields, *NOT* comma separated list.
-    // #[inline]
-    // pub fn get_all<'a, K: AsHeaderName>(&'a self, name: &'a K) -> iter::GetAll<'a> {
-    //     iter::GetAll::new(self, name.as_lowercase_str(), name.hash())
-    // }
+    /// Returns an iterator to all header values corresponding to the given header name.
+    ///
+    /// Note that this is the result of duplicate header fields, *NOT* comma separated list.
+    #[inline]
+    pub fn get_all<'a>(&'a self, name: &'a HeaderName) -> GetAll<'a> {
+        GetAll::new(self, name.as_str(), name.hash())
+    }
 
     /// Inserts a key-value pair into the map.
     ///
@@ -285,11 +260,15 @@ impl HeaderMap {
         unsafe { self.insert_inner(name.hash(), HeaderField::new(name, value), true) };
     }
 
-    // pub(crate) fn try_append_field(&mut self, field: HeaderField) -> Result<(), TryReserveError> {
-    //     self.reserve_one()?;
-    //     unsafe { self.insert_inner(field, true) };
-    //     Ok(())
-    // }
+    pub(crate) fn try_append_field(
+        &mut self,
+        hash: u32,
+        field: HeaderField,
+    ) -> Result<(), TryReserveError> {
+        self.reserve_one()?;
+        unsafe { self.insert_inner(hash, field, true) };
+        Ok(())
+    }
 
     /// Removes a header from the map, returning the first header value if it founds.
     ///
@@ -384,9 +363,10 @@ impl HeaderMap {
             let off;
             let cap;
             let index;
+            let hash_field;
             self, name, hash
         }
-        unsafe { ptr.add(index as usize).as_ref().as_ref().map(|e|e.field(self)) }
+        Some(hash_field.field(self))
     }
 
     /// # Safety
@@ -454,6 +434,7 @@ impl HeaderMap {
             let offset;
             let hash_field_cap;
             let index;
+            let _hash_field;
             self, name, hash
         }
         let hash_field_idx = index;
@@ -538,6 +519,7 @@ impl HeaderMap {
             let offset;
             let hash_field_cap;
             let index;
+            let _hash_field;
             self, name, hash
         }
         let hash_field_idx = index;
@@ -581,6 +563,7 @@ impl HeaderMap {
                 offset;
                 hash_field_cap;
                 index;
+                hash_field;
                 self, name, hash
             }
             let swap_hash_field = unsafe { ptr.add(index as usize).as_mut() };
@@ -722,6 +705,7 @@ macro_rules! probe_search {
         let $off:ident;
         let $cap:ident;
         let $index:ident;
+        let $hfield:ident;
         $map:ident, $name:ident, $hash:ident
     ) => {
         let $ptr = $map.fields.cast::<HashIdx>();
@@ -734,6 +718,7 @@ macro_rules! probe_search {
             $off;
             $cap;
             $index;
+            $hfield;
             $map, $name, $hash
         }
     };
@@ -742,10 +727,11 @@ macro_rules! probe_search {
         $off:ident;
         $cap:ident;
         $index:ident;
+        $hfield:ident;
         $map:ident, $name:ident, $hash:ident
     ) => {
         // 1. find the target hash field
-        loop {
+        let $hfield = loop {
             // `?` is the base case of the loop, there is always `None` because the load
             // factor is capped to less than capacity
             // SAFETY: `index` is masked by hash table capacity
@@ -753,13 +739,13 @@ macro_rules! probe_search {
             if hash_field.hash == $hash {
                 let field = hash_field.field($map);
                 if field.name().as_str() == $name {
-                    break;
+                    break hash_field;
                 }
             }
 
             // linear probing
             $index = ($index + 1) % $cap;
-        }
+        };
     };
 }
 
@@ -770,6 +756,64 @@ impl std::fmt::Debug for HeaderMap {
         f.debug_map().entries(self.pairs()).finish()
     }
 }
+
+// ===== Duplicate Header Values Iterator =====
+
+/// An immutable iterator over the header values with the same header name.
+///
+/// This iterator is created from [`HeaderMap::get_all`] method.
+#[derive(Clone)]
+pub struct GetAll<'a> {
+    map: &'a HeaderMap,
+    name: &'a str,
+    hash: u32,
+}
+
+impl<'a> GetAll<'a> {
+    pub(crate) fn new(map: &'a HeaderMap, name: &'a str, hash: u32) -> Self {
+        Self { map, name, hash }
+    }
+}
+
+impl<'a> Iterator for GetAll<'a> {
+    type Item = &'a HeaderValue;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        let Self {
+            ref mut map,
+            name,
+            hash,
+        } = *self;
+        probe_search! {
+            let ptr;
+            let off;
+            let cap;
+            let index;
+            let hash_field;
+            map, name, hash
+        };
+        Some(hash_field.field(map).value())
+    }
+}
+
+impl<'a> std::fmt::Debug for GetAll<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(self.clone()).finish()
+    }
+}
+
+impl<'a> IntoIterator for &'a HeaderMap {
+    type Item = &'a HeaderField;
+
+    type IntoIter = slice::Iter<'a, HeaderField>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+// ===== Allocation =====
 
 mod alloc {
     //! Allocation for the HeaderMap is divided into two region. The first region is used to store
@@ -932,7 +976,6 @@ mod test {
         let mut map = HeaderMap::new();
         map.append(s::DATE, FOO);
         map.append(s::DATE, FOO);
-        // map.get_all(&s::DATE);
         assert_eq!(map.len(), 2);
         assert_field!(map, &[s::DATE, s::DATE]);
     }
