@@ -1,11 +1,10 @@
 //! HTTP Response
 use crate::headers::HeaderMap;
-use crate::http::{StatusCode, Version};
+use crate::http::StatusCode;
 
 /// HTTP Response Parts.
 #[derive(Debug, Default)]
 pub struct Parts {
-    pub version: Version,
     pub status: StatusCode,
     pub headers: HeaderMap,
 }
@@ -41,11 +40,6 @@ impl<T> Response<T> {
     }
 
     delegate! {
-        /// Returns shared reference to [`Version`].
-        version(),
-        /// Returns mutable reference to [`Version`].
-        version_mut() -> Version;
-
         /// Returns shared reference to [`StatusCode`].
         status(),
         /// Returns mutable reference to [`StatusCode`].

@@ -200,7 +200,6 @@ pub fn poll_request(
         method,
         scheme: session.scheme,
         target,
-        version: crate::http::Version::HTTP_11,
         headers: mem::take(&mut session.headers),
     };
 
@@ -375,8 +374,7 @@ impl RequestContext {
 // ===== Response Writer =====
 
 fn write_response_head(res: &response::Parts, buf: &mut BytesMut, content_length: Option<u64>) {
-    buf.extend_from_slice(res.version.as_str().as_bytes());
-    buf.extend_from_slice(b" ");
+    buf.extend_from_slice(b"HTTP/1.1 ");
     buf.extend_from_slice(res.status.as_str().as_bytes());
     buf.extend_from_slice(b"\r\nDate: ");
     buf.extend_from_slice(&httpdate_now()[..]);

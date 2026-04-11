@@ -10,7 +10,6 @@ pub struct HeaderField {
     hash: Size,
     name: HeaderName,
     value: HeaderValue,
-    is_sensitive: bool,
 }
 
 impl HeaderField {
@@ -19,7 +18,6 @@ impl HeaderField {
             hash: name.hash(),
             name,
             value,
-            is_sensitive: false,
         }
     }
 
@@ -28,17 +26,12 @@ impl HeaderField {
             hash,
             name,
             value,
-            is_sensitive: false,
         }
     }
 
     /// name must be in lowercase
     pub(crate) fn cached_hash(&self) -> Size {
         self.hash
-    }
-
-    pub(crate) fn hpack_size(&self) -> usize {
-        self.name.as_str().len() + self.value.as_bytes().len() + 32
     }
 
     /// Returns reference to [`HeaderName`].
@@ -51,12 +44,6 @@ impl HeaderField {
     #[inline]
     pub const fn value(&self) -> &HeaderValue {
         &self.value
-    }
-
-    /// Returns `true` if header is marked as sensitive.
-    #[inline]
-    pub const fn is_sensitive(&self) -> bool {
-        self.is_sensitive
     }
 
     /// Consume [`HeaderField`] into [`HeaderName`] and [`HeaderValue`].
@@ -73,7 +60,6 @@ impl std::fmt::Debug for HeaderField {
         f.debug_struct("HeaderField")
             .field("name", &self.name)
             .field("value", &self.value)
-            .field("is_sensitive", &self.is_sensitive)
             .finish()
     }
 }

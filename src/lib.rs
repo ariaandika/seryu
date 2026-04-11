@@ -18,7 +18,6 @@
 //! ## Behaviors
 //!
 //! - [`h1`] HTTP/1.1 ([RFC9112])
-//! - [`h2`] HTTP/2.0 ([RFC9113])
 //!
 //! ## User Abstraction
 //!
@@ -54,7 +53,6 @@ pub mod body;
 
 // HTTP protocol
 pub mod h1;
-pub mod h2;
 
 // user abstraction
 pub mod service;

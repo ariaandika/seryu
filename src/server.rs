@@ -4,14 +4,12 @@ use std::pin::Pin;
 use std::task::{Poll, ready};
 use tcio::io::{AsyncRead, AsyncWrite};
 
-use crate::{h1, h2};
+use crate::h1;
 use crate::service::HttpService;
 
 // ===== Server =====
 
 pub type Http1Server<S, L> = Server<S, L, Http1>;
-
-pub type Http2Server<S, L> = Server<S, L, Http2>;
 
 #[derive(Debug)]
 pub struct Server<S, L, D> {
@@ -86,23 +84,6 @@ where
     #[inline]
     fn call(service: S, io: IO) -> Self::Future {
         h1::Connection::new(service, io)
-    }
-}
-
-// ===== Http2 Driver =====
-
-#[derive(Debug)]
-pub struct Http2;
-
-impl<S, IO> Driver<S, IO> for Http2
-where
-    S: HttpService,
-{
-    type Future = h2::Connection<S, IO>;
-
-    #[inline]
-    fn call(service: S, io: IO) -> Self::Future {
-        h2::Connection::new(service, io)
     }
 }
 

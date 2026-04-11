@@ -1,12 +1,11 @@
 use crate::headers::HeaderMap;
-use crate::http::{Authority, Method, Scheme, StatusCode, Target, Version};
+use crate::http::{Authority, Method, Scheme, StatusCode, Target};
 
 // ===== RequestHead =====
 
 #[derive(Debug)]
 pub struct RequestHead {
     pub(crate) method: Method,
-    pub(crate) version: Version,
     pub(crate) scheme: Scheme,
     pub(crate) authority: Authority,
     pub(crate) target: Target,
@@ -18,12 +17,6 @@ impl RequestHead {
     #[inline]
     pub const fn method(&self) -> Method {
         self.method
-    }
-
-    /// Returns the request HTTP version.
-    #[inline]
-    pub const fn version(&self) -> Version {
-        self.version
     }
 
     /// Returns `true` if current scheme is https.
@@ -89,24 +82,16 @@ impl RequestHead {
 
 #[derive(Debug)]
 pub struct ResponseHead {
-    pub(crate) version: Version,
     pub(crate) status: StatusCode,
     pub(crate) headers: HeaderMap,
 }
 
 impl ResponseHead {
-    pub fn new(version: Version, status: StatusCode, headers: HeaderMap) -> Self {
+    pub fn new(status: StatusCode, headers: HeaderMap) -> Self {
         Self {
-            version,
             status,
             headers,
         }
-    }
-
-    /// Returns the response HTTP version.
-    #[inline]
-    pub const fn version(&self) -> Version {
-        self.version
     }
 
     /// Returns the response status code.

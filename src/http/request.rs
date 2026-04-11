@@ -1,6 +1,6 @@
 //! HTTP Request
 use crate::headers::HeaderMap;
-use crate::http::{Method, Scheme, Target, Version};
+use crate::http::{Method, Scheme, Target};
 
 /// HTTP Request Parts.
 #[derive(Debug, Default, Clone)]
@@ -8,7 +8,6 @@ pub struct Parts {
     pub method: Method,
     pub scheme: Scheme,
     pub target: Target,
-    pub version: Version,
     pub headers: HeaderMap,
 }
 
@@ -51,11 +50,6 @@ impl<T> Request<T> {
         target(),
         /// Returns mutable reference to [`Target`].
         target_mut() -> Target;
-
-        /// Returns shared reference to [`Version`].
-        version(),
-        /// Returns mutable reference to [`Version`].
-        version_mut() -> Version;
 
         /// Returns shared reference to [`HeaderMap`].
         headers(),

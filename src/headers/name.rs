@@ -37,7 +37,6 @@ enum Repr {
 struct Static {
     string: &'static str,
     hash: u32,
-    hpack_idx: Option<std::num::NonZeroU8>
 }
 
 impl HeaderName {
@@ -89,14 +88,6 @@ impl HeaderName {
         }
     }
 
-    pub(crate) fn from_internal_lowercase(name: Bytes) -> Result<(Self, u32), HeaderError> {
-        if matches!(name.len(), 1..=MAX_HEADER_NAME_LEN) {
-            internal_header_name_lowercase(name)
-        } else {
-            Err(HeaderError::invalid_len(name.len()))
-        }
-    }
-
     /// Parse header name by copying from slice of bytes.
     ///
     /// Input name is normalized to lowercase.
@@ -145,26 +136,6 @@ impl HeaderName {
             err.panic_const();
         }
     }
-
-    /// Returns hpack static header index if any.
-    ///
-    /// Note that this value only available in constant headers.
-    pub(crate) const fn hpack_static(&self) -> Option<std::num::NonZero<u8>> {
-        match &self.repr {
-            Repr::Static(s) => s.hpack_idx,
-            Repr::Arbitrary(_) => None,
-        }
-    }
-
-    /// Returns `true` if this is a pseudo header.
-    ///
-    /// Note that this only available in constant headers.
-    pub(crate) fn is_pseudo_header(&self) -> bool {
-        match self.repr {
-            Repr::Static(Static { hpack_idx: Some(idx), .. }) => idx.get() <= 14,
-            _ => false,
-        }
-    }
 }
 
 // ===== Parser =====
@@ -210,30 +181,6 @@ fn copy_to_header_name(bytes: &[u8]) -> Result<HeaderName, HeaderError> {
     })
 }
 
-fn internal_header_name_lowercase(bytes: Bytes) -> Result<(HeaderName, u32), HeaderError> {
-    use HeaderError as E;
-
-    const BASIS: u32 = 0x811C_9DC5;
-    const PRIME: u32 = 0x0100_0193;
-
-    let mut hash = BASIS;
-
-    for byte in bytes.as_slice() {
-        if matches::is_token_lowercase(*byte) {
-            hash = PRIME.wrapping_mul(hash ^ *byte as u32);
-        } else {
-            return Err(E::Invalid);
-        }
-    }
-
-    Ok((
-        HeaderName {
-            repr: Repr::Arbitrary(bytes),
-        },
-        hash,
-    ))
-}
-
 // ===== Traits =====
 
 impl std::fmt::Display for HeaderName {
@@ -274,14 +221,6 @@ impl Eq for HeaderName { }
 standard_header! {
     /// HTTP Standard Headers
     mod standard;
-
-    // ===== Pseudo Headers =====
-
-    pub(crate) const PSEUDO_AUTHORITY: HeaderName = ":authority", hpack_idx: 1;
-    pub(crate) const PSEUDO_METHOD: HeaderName = ":method", hpack_idx: 2;
-    pub(crate) const PSEUDO_PATH: HeaderName = ":path", hpack_idx: 4;
-    pub(crate) const PSEUDO_SCHEME: HeaderName = ":scheme", hpack_idx: 6;
-    pub(crate) const PSEUDO_STATUS: HeaderName = ":status", hpack_idx: 8;
 
     // ===== Authentication =====
 
@@ -710,7 +649,6 @@ macro_rules! standard_header {
                 static $id: Static = Static {
                     string: $name,
                     hash: matches::hash_32($name.as_bytes()),
-                    hpack_idx: standard_header! { @HPACK_IDX $(, $k:$v)* },
                 };
 
                 HeaderName {
@@ -772,7 +710,6 @@ mod request {
             Static {
                 string: $s,
                 hash: matches::hash_32($s.as_bytes()),
-                hpack_idx: std::num::NonZeroU8::new($hpack),
             }
         };
         ($s:literal) => {
@@ -834,7 +771,6 @@ mod request {
             &Static {
                 string: "_",
                 hash: 0,
-                hpack_idx: std::num::NonZeroU8::new(0),
             }
         }; CAP as usize];
         let mut i = 0;
@@ -857,7 +793,6 @@ mod request {
             let hdr = header(name.hash, name.string.as_bytes()).expect(name.string);
             assert_eq!(hdr.as_str(), name.string);
             assert_eq!(hdr.hash(), name.hash);
-            assert_eq!(hdr.hpack_static(), name.hpack_idx);
         }
     }
 }
