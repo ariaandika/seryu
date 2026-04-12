@@ -43,19 +43,34 @@
 mod log;
 mod matches;
 
+mod method;
+mod status;
+
+mod scheme;
+mod authority;
+mod target;
+mod uri;
+
+pub mod headers;
+
+pub mod body;
+pub mod request;
+pub mod response;
+pub mod error;
+
+pub mod date;
+
+pub mod h1;
+pub mod service;
+pub mod server;
+
+// ===== reexports =====
 pub use tcio::bytes;
 
-// definitions
-// FIXME: use the new header map implementation
-pub mod headers;
-pub mod http;
-pub mod body;
+pub use method::Method;
+pub use status::StatusCode;
 
-// HTTP protocol
-pub mod h1;
-
-// user abstraction
-pub mod service;
-
-// integration
-pub mod server;
+pub use scheme::Scheme;
+pub use authority::Authority;
+pub use target::Target;
+pub use uri::HttpUri;

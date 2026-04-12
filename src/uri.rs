@@ -1,8 +1,8 @@
 use std::slice::from_raw_parts;
 use tcio::bytes::Bytes;
 
-use crate::http::error::UriError;
-use crate::http::{authority, target};
+use crate::error::UriError;
+use crate::{authority, target};
 
 /// HTTP URI.
 ///

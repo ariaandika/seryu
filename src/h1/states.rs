@@ -1,6 +1,6 @@
+use crate::Scheme;
 use crate::body::shared::SendHandle;
 use crate::headers::HeaderMap;
-use crate::http::Scheme;
 
 #[derive(Debug)]
 pub struct Session {

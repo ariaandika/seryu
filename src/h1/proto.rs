@@ -4,12 +4,15 @@ use tcio::bytes::{Buf, BytesMut};
 use tcio::num::{itoa, wrapping_atou};
 
 use crate::body::{Body, Incoming};
+use crate::date::httpdate_now;
+use crate::error::{ParseError, ProtoError, UserError};
 use crate::h1::body::{BodyDecoder, BodyEncoder, ContentKind};
 use crate::h1::states::Session;
-use crate::headers::{HeaderField, HeaderName, HeaderValue, lookup};
-use crate::http::error::{ParseError, ProtoError, UserError};
-use crate::http::{Authority, Method, Request, Response, Target, httpdate_now, request, response};
 use crate::headers::matches;
+use crate::headers::{HeaderField, HeaderName, HeaderValue, lookup};
+use crate::request::{self, Request};
+use crate::response::{self, Response};
+use crate::{Authority, Method, Target};
 
 use ParseError as P;
 use ProtoError as E;

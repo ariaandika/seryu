@@ -108,7 +108,7 @@ macro_rules! props {
             ///
             /// This method only accept ASCII uppercase alphabetic.
             #[inline]
-            pub fn from_bytes(bytes: &[u8]) -> Result<Self, crate::http::error::UnknownMethod> {
+            pub fn from_bytes(bytes: &[u8]) -> Result<Self, crate::error::UnknownMethod> {
                 // there is no `bytestify` to allow placing it in pattern matching
                 $(const $konst: &[u8] = stringify!($konst).as_bytes();)*
                 match bytes {
@@ -167,7 +167,7 @@ macro_rules! props {
         }
 
         impl std::str::FromStr for Method {
-            type Err = crate::http::error::UnknownMethod;
+            type Err = crate::error::UnknownMethod;
 
             #[inline]
             fn from_str(s: &str) -> Result<Self, Self::Err> {

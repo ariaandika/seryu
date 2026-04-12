@@ -1,6 +1,6 @@
 use tcio::bytes::Bytes;
 
-use crate::http::error::UriError;
+use crate::error::UriError;
 use crate::matches;
 
 /// HTTP Authority.

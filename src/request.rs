@@ -1,32 +1,37 @@
-//! HTTP Response
+//! HTTP Request
 use crate::headers::HeaderMap;
-use crate::http::StatusCode;
+use crate::{Method, Scheme, Target};
 
-/// HTTP Response Parts.
-#[derive(Debug, Default)]
+mod head;
+
+pub use head::RequestHead;
+
+/// HTTP Request Parts.
+#[derive(Debug, Default, Clone)]
 pub struct Parts {
-    pub status: StatusCode,
+    pub method: Method,
+    pub scheme: Scheme,
+    pub target: Target,
     pub headers: HeaderMap,
 }
 
-/// HTTP Response.
+/// HTTP Request.
 #[derive(Debug, Default)]
-pub struct Response<T> {
+pub struct Request<T> {
     parts: Parts,
     body: T,
 }
 
-// ===== Constructor =====
-
-impl<T> Response<T> {
-    /// Create [`Response`] from [`Parts`] and body.
+/// Constructor
+impl<T> Request<T> {
+    /// Create [`Request`] from [`Parts`] and body.
     #[inline]
     pub fn from_parts(parts: Parts, body: T) -> Self {
-        Self { parts, body }
+        Self { parts, body  }
     }
 }
 
-impl<T> Response<T> {
+impl<T> Request<T> {
     /// Returns shared reference to [`Parts`].
     #[inline]
     pub fn parts(&self) -> &Parts {
@@ -40,10 +45,15 @@ impl<T> Response<T> {
     }
 
     delegate! {
-        /// Returns shared reference to [`StatusCode`].
-        status(),
-        /// Returns mutable reference to [`StatusCode`].
-        status_mut() -> StatusCode;
+        /// Returns shared reference to [`Method`].
+        method(),
+        /// Returns mutable reference to [`Method`].
+        method_mut() -> Method;
+
+        /// Returns shared reference to [`Target`].
+        target(),
+        /// Returns mutable reference to [`Target`].
+        target_mut() -> Target;
 
         /// Returns shared reference to [`HeaderMap`].
         headers(),
@@ -51,13 +61,13 @@ impl<T> Response<T> {
         headers_mut() -> HeaderMap;
     }
 
-    /// Returns shared reference to response body.
+    /// Returns shared reference to request body.
     #[inline]
     pub fn body(&self) -> &T {
         &self.body
     }
 
-    /// Returns mutable reference to response body.
+    /// Returns mutable reference to request body.
     #[inline]
     pub fn body_mut(&mut self) -> &mut T {
         &mut self.body
@@ -65,14 +75,14 @@ impl<T> Response<T> {
 }
 
 /// Destructor
-impl<T> Response<T> {
-    /// Destruct response into [`Parts`] and body.
+impl<T> Request<T> {
+    /// Destruct request into [`Parts`] and body.
     #[inline]
     pub fn into_parts(self) -> (Parts, T) {
         (self.parts, self.body)
     }
 
-    /// Destruct response into response body.
+    /// Destruct request into request body.
     #[inline]
     pub fn into_body(self) -> T {
         self.body
