@@ -41,8 +41,32 @@ impl HashField {
         unsafe { map.fields.add(self.idx.get() as usize).as_ref() }
     }
 
-    fn field_mut<'a>(&self, map: &'a mut HeaderMap) -> &'a mut HeaderField {
-        unsafe { map.fields.add(self.idx.get() as usize).as_mut() }
+    fn checked_field<'a>(&self, map: &'a HeaderMap, name: &str, hash: u32) -> Option<&'a HeaderField> {
+        if self.hash != hash {
+            return None;
+        }
+        let field = unsafe { map.fields.add(self.idx.get() as usize).as_ref() };
+        if field.name().as_str() == name {
+            Some(field)
+        } else {
+            None
+        }
+    }
+
+    fn checked_field_mut<'a>(&self, map: &'a mut HeaderMap, name: &str, hash: u32) -> Option<&'a mut HeaderField> {
+        if self.hash != hash {
+            return None;
+        }
+        let field = unsafe { map.fields.add(self.idx.get() as usize).as_mut() };
+        if field.name().as_str() == name {
+            Some(field)
+        } else {
+            None
+        }
+    }
+
+    fn put_field(&self, map: &mut HeaderMap, field: HeaderField) {
+        unsafe { map.fields.add(self.idx.get() as usize).write(field) };
     }
 
     fn field_ptr(&self, map: &mut HeaderMap) -> ptr::NonNull<HeaderField> {
@@ -202,7 +226,7 @@ impl HeaderMap {
         if self.is_empty() {
             return false
         }
-        self.field(name.as_str(), name.hash()).is_some()
+        Probe::find_field(self, name.as_str(), name.hash()).is_some()
     }
 
     /// Returns a reference to the first header value corresponding to the given header name.
@@ -221,7 +245,7 @@ impl HeaderMap {
         if self.is_empty() {
             return None;
         }
-        self.field(name.as_str(), name.hash()).map(HeaderField::value)
+        Probe::find_field(self, name.as_str(), name.hash()).map(HeaderField::value)
     }
 
     /// Returns an iterator to all header values corresponding to the given header name.
@@ -357,67 +381,43 @@ impl HeaderMap {
 // ===== Implementation =====
 
 impl HeaderMap {
-    fn field(&self, name: &str, hash: u32) -> Option<&HeaderField> {
-        probe_search! {
-            let ptr;
-            let off;
-            let cap;
-            let index;
-            let hash_field;
-            self, name, hash
-        }
-        Some(hash_field.field(self))
-    }
-
     /// # Safety
     ///
     /// `self.len < self.cap`
     unsafe fn insert_inner(&mut self, hash: u32, field: HeaderField, append: bool) -> Option<HeaderField> {
         debug_assert!(self.len < self.cap);
 
-        let ptr = self.fields.cast::<HashIdx>();
-        let offset = alloc::offset(self.cap);
-        let hash_field_cap = alloc::hash_field_cap(offset) as Size;
-
-        let mut index = hash;
+        let mut probe = Probe::new(self, hash);
 
         loop {
-            index %= hash_field_cap;
-            // SAFETY: `index` is masked by capacity
-            let hash_field = unsafe { ptr.add(index as usize).as_mut() };
-            let Some(dup_hash_field) = hash_field.as_mut() else {
+            let hash_field_mut = probe.hash_field_mut();
+            let Some(dup_hash_field) = hash_field_mut.as_mut() else {
                 // found empty slot
 
                 // SAFETY: this function should be called with non zero capacity, thus offset
                 // will never be zero
-                let offset_idx = unsafe { NonZeroU32::new_unchecked(self.len + offset as u32) };
-                *hash_field = Some(HashField {
-                    hash,
-                    idx: offset_idx,
-                });
+                let idx = unsafe { NonZeroU32::new_unchecked(self.len + probe.offset) };
+                let hash_field = HashField { hash, idx };
 
-                // move the field
-                unsafe { self.fields.add(offset_idx.get() as usize).write(field); };
-
+                // put the field
+                hash_field.put_field(self, field);
+                // put the hash field
+                *hash_field_mut = Some(hash_field);
+                // update length
                 self.len += 1;
-
                 return None
             };
 
-            if !append && hash == dup_hash_field.hash {
-                // duplicate Header
-
-                let dup_field = dup_hash_field.field_mut(self);
-                if dup_field.name() == field.name() {
-                    // replace and returns duplicate
-                    return Some(mem::replace(dup_field, field));
-                }
+            if !append
+                && let Some(dup_field) =
+                    dup_hash_field.checked_field_mut(self, field.name().as_str(), hash)
+            {
+                // replace and returns duplicate
+                return Some(mem::replace(dup_field, field));
             }
 
             // appending, look for the next empty slot
-
-            // linear probing
-            index += 1;
+            probe.advance();
         }
     }
 
@@ -428,64 +428,69 @@ impl HeaderMap {
     /// 4. take out the removed field
     /// 5. copy the fields backward
     fn remove_inner(&mut self, name: &str, hash: u32) -> Option<HeaderField> {
+        let mut probe = Probe::new(self, hash);
+
         // 1. find the target hash field
-        probe_search! {
-            let ptr;
-            let offset;
-            let hash_field_cap;
-            let index;
-            let _hash_field;
-            self, name, hash
+        loop {
+            let hash_field = probe.hash_field_mut().as_mut()?;
+            if hash_field.checked_field(self, name, hash).is_some() {
+                break;
+            }
+            probe.advance();
         }
-        let hash_field_idx = index;
+        let hash_field_idx = probe.index;
 
         // 2. replace the hash field with other entry that may be displaced by collision
-        let mut swap_candidate = &mut None;
+        let mut swap_candidate = None;
         loop {
-            index = (index + 1) % hash_field_cap;
+            probe.advance();
             // SAFETY: `index` is masked by hash table capacity
-            let hash_field_mut = unsafe { ptr.add(index as usize).as_mut() };
-            let Some(hash_field) = hash_field_mut.as_mut() else {
+            let hash_field_mut = probe.hash_field_mut();
+            let Some(hash_field) = hash_field_mut.as_ref() else {
                 break;
             };
             // only hash field that is displaced that should be swapped, other field may just
             // happens to be contiguous
-            if hash_field.hash % hash_field_cap == hash_field_idx {
-                swap_candidate = hash_field_mut;
+            if hash_field.hash % probe.hash_field_cap == hash_field_idx {
+                swap_candidate = hash_field_mut.take();
             }
         }
         // SAFETY:
-        // - `target_idx` is result of the search, its valid index
+        // - `hash_field_idx` is result of a search, its valid index
         // - `unwrap_unchecked` is safe because if the target hash field is `None`, this function
         // already returned
         let hash_field = unsafe {
-            ptr.add(hash_field_idx as usize)
-                .replace(swap_candidate.take())
+            probe
+                .ptr
+                .add(hash_field_idx as usize)
+                .replace(swap_candidate)
                 .unwrap_unchecked()
         };
 
         // 3. update hash fields indexes that will be shifted
         // `hash_field.idx` are index with `offset` applied, but `self.len` is not
-        let max_bounds = self.len + offset as u32;
+        let max_bounds = self.len + probe.offset;
         let mut i = hash_field.idx.get() + 1;
         while i < max_bounds {
             let field_mut = unsafe { self.fields.add(i as usize).as_mut() };
-            let hash = field_mut.name().hash();
-            let mut hash_idx = hash % hash_field_cap;
+            let name = field_mut.name();
+            let hash = name.hash();
+            let mut probe_in = Probe::new(self, hash);
 
             loop {
-                let hash_field = unsafe { ptr.add(hash_idx as usize).as_mut().as_mut() };
-                let Some(hash_field) = hash_field else {
+                // let hash_field = unsafe { ptr.add(hash_idx as usize).as_mut().as_mut() };
+                let Some(hash_field) = probe_in.hash_field_mut() else {
                     unreachable!("fields with no hash entry")
                 };
                 // check whether this is the correct hash fields, not displaced
                 if hash_field.hash == hash {
+                    debug_assert_eq!(hash_field.field(self).name().as_str(), name.as_str());
                     // affected fields is backshifted
                     hash_field.idx = unsafe { NonZeroU32::new_unchecked(i - 1) };
                     break;
                 }
                 // displaced, search next entry
-                hash_idx = (hash_idx + 1) % hash_field_cap;
+                probe_in.advance();
             }
 
             i += 1;
@@ -498,7 +503,7 @@ impl HeaderMap {
 
         // 5. copy the fields backward
         // do this AFTER all hash tables updated
-        let n = self.len - (hash_field.idx.get() - offset as u32);
+        let n = self.len - (hash_field.idx.get() - probe.offset);
         unsafe { field_ptr.copy_from(field_ptr.add(1), n as usize) };
 
         // update the length
@@ -513,30 +518,31 @@ impl HeaderMap {
     /// 4. take out the removed field
     /// 5. replace with the last field
     fn swap_remove_inner(&mut self, name: &str, hash: u32) -> Option<HeaderField> {
+        let mut probe = Probe::new(self, hash);
+
         // 1. find the target hash field
-        probe_search! {
-            let ptr;
-            let offset;
-            let hash_field_cap;
-            let index;
-            let _hash_field;
-            self, name, hash
+        loop {
+            let hash_field = probe.hash_field_mut().as_mut()?;
+            if hash_field.checked_field(self, name, hash).is_some() {
+                break;
+            }
+            probe.advance();
         }
-        let hash_field_idx = index;
+        let hash_field_idx = probe.index;
 
         // 2. replace the hash field with other entry that may be displaced by collision
-        let mut swap_candidate = &mut None;
+        let mut swap_candidate = None;
         loop {
-            index = (index + 1) % hash_field_cap;
+            probe.advance();
             // SAFETY: `index` is masked by hash table capacity
-            let hash_field_mut = unsafe { ptr.add(index as usize).as_mut() };
+            let hash_field_mut = probe.hash_field_mut();
             let Some(hash_field) = hash_field_mut.as_mut() else {
                 break;
             };
             // only hash field that is displaced that should be swapped, other field may just
             // happens to be contiguous
-            if hash_field.hash % hash_field_cap == hash_field_idx {
-                swap_candidate = hash_field_mut;
+            if hash_field.hash % probe.hash_field_cap == hash_field_idx {
+                swap_candidate = hash_field_mut.take();
             }
         }
         // SAFETY:
@@ -544,33 +550,35 @@ impl HeaderMap {
         // - `unwrap_unchecked` is safe because if the target hash field is `None`, this function
         // already returned
         let hash_field = unsafe {
-            ptr.add(hash_field_idx as usize)
-                .replace(swap_candidate.take())
+            probe
+                .ptr
+                .add(hash_field_idx as usize)
+                .replace(swap_candidate)
                 .unwrap_unchecked()
         };
 
         // 3. update the last field's hash field index
         debug_assert!(!self.is_empty());
-        let last_field_idx = offset + (self.len - 1) as usize;
+        let last_field_idx = (probe.offset + (self.len - 1)) as usize;
         if self.len != 1 {
             let last_field = unsafe { self.fields.add(last_field_idx).as_mut() };
-            let name = last_field.name().as_str();
-            let hash = last_field.name().hash();
+            let name = last_field.name();
+            let hash = name.hash();
 
-            index = hash % hash_field_cap;
-            probe_search! {
-                ptr;
-                offset;
-                hash_field_cap;
-                index;
-                hash_field;
-                self, name, hash
+            let mut probe_swap = Probe::new(self, hash);
+
+            loop {
+                let Some(last_hash_field) = probe_swap.hash_field_mut() else {
+                    unreachable!("fields with no hash entry")
+                };
+                // check whether this is the correct hash fields, not displaced
+                if last_hash_field.checked_field(self, name.as_str(), hash).is_some() {
+                    last_hash_field.idx = hash_field.idx;
+                    break;
+                }
+                // displaced, search next entry
+                probe_swap.advance();
             }
-            let swap_hash_field = unsafe { ptr.add(index as usize).as_mut() };
-            let Some(swap_hash_field) = swap_hash_field else {
-                unreachable!("fields with no hash entry")
-            };
-            swap_hash_field.idx = hash_field.idx;
         }
 
         // 4. take out the removed field
@@ -699,57 +707,58 @@ impl HeaderMap {
     }
 }
 
-macro_rules! probe_search {
-    (
-        let $ptr:ident;
-        let $off:ident;
-        let $cap:ident;
-        let $index:ident;
-        let $hfield:ident;
-        $map:ident, $name:ident, $hash:ident
-    ) => {
-        let $ptr = $map.fields.cast::<HashIdx>();
-        let $off = alloc::offset($map.cap);
-        let $cap = alloc::hash_field_cap($off) as Size;
+// ===== Probe Search =====
 
-        let mut $index = $hash % $cap;
-        probe_search! {
-            $ptr;
-            $off;
-            $cap;
-            $index;
-            $hfield;
-            $map, $name, $hash
-        }
-    };
-    (
-        $ptr:ident;
-        $off:ident;
-        $cap:ident;
-        $index:ident;
-        $hfield:ident;
-        $map:ident, $name:ident, $hash:ident
-    ) => {
-        // 1. find the target hash field
-        let $hfield = loop {
-            // `?` is the base case of the loop, there is always `None` because the load
-            // factor is capped to less than capacity
-            // SAFETY: `index` is masked by hash table capacity
-            let hash_field = unsafe { $ptr.add($index as usize).as_mut().as_mut()? };
-            if hash_field.hash == $hash {
-                let field = hash_field.field($map);
-                if field.name().as_str() == $name {
-                    break hash_field;
-                }
-            }
-
-            // linear probing
-            $index = ($index + 1) % $cap;
-        };
-    };
+/// Iterate a hash fields for hash collision.
+///
+/// - find first occurence entry (get)
+/// - continue after first occurence entry (get_all)
+/// - find empty entry (insert)
+/// - find last after first occurence (swap_remove)
+/// - find by hash (remove)
+#[derive(Clone)]
+struct Probe {
+    ptr: ptr::NonNull<HashIdx>,
+    offset: u32,
+    hash_field_cap: u32,
+    index: u32,
 }
 
-use probe_search;
+impl Probe {
+    fn new(map: &HeaderMap, hash: u32) -> Self {
+        let offset = alloc::offset(map.cap) as u32;
+        let hash_field_cap = alloc::hash_field_cap(offset as usize) as u32;
+        Self {
+            ptr: map.fields.cast::<HashIdx>(),
+            offset,
+            hash_field_cap,
+            index: hash % hash_field_cap,
+        }
+    }
+
+    fn find_field<'a>(map: &'a HeaderMap, name: &str, hash: u32) -> Option<&'a HeaderField> {
+        let mut probe = Self::new(map, hash);
+        loop {
+            let hash_field = probe.hash_field()?;
+            if let Some(field) = hash_field.checked_field(map, name, hash) {
+                return Some(field);
+            }
+            probe.advance();
+        }
+    }
+
+    fn hash_field<'a>(&self) -> Option<&'a HashField> {
+        unsafe { self.ptr.add(self.index as usize).as_ref().as_ref() }
+    }
+
+    fn hash_field_mut<'a>(&self) -> &'a mut Option<HashField> {
+        unsafe { self.ptr.add(self.index as usize).as_mut() }
+    }
+
+    fn advance(&mut self) {
+        self.index = (self.index + 1) % self.hash_field_cap;
+    }
+}
 
 impl std::fmt::Debug for HeaderMap {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -767,11 +776,13 @@ pub struct GetAll<'a> {
     map: &'a HeaderMap,
     name: &'a str,
     hash: u32,
+    probe: Probe,
 }
 
 impl<'a> GetAll<'a> {
+    #[inline]
     pub(crate) fn new(map: &'a HeaderMap, name: &'a str, hash: u32) -> Self {
-        Self { map, name, hash }
+        Self { map, name, hash, probe: Probe::new(map, hash) }
     }
 }
 
@@ -780,20 +791,14 @@ impl<'a> Iterator for GetAll<'a> {
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        let Self {
-            ref mut map,
-            name,
-            hash,
-        } = *self;
-        probe_search! {
-            let ptr;
-            let off;
-            let cap;
-            let index;
-            let hash_field;
-            map, name, hash
-        };
-        Some(hash_field.field(map).value())
+        loop {
+            let hash_field = self.probe.hash_field()?;
+            self.probe.advance();
+            match hash_field.checked_field(self.map, self.name, self.hash) {
+                Some(ok) => break Some(ok.value()),
+                None => continue,
+            }
+        }
     }
 }
 
@@ -808,6 +813,7 @@ impl<'a> IntoIterator for &'a HeaderMap {
 
     type IntoIter = slice::Iter<'a, HeaderField>;
 
+    #[inline]
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
     }
@@ -976,6 +982,7 @@ mod test {
         let mut map = HeaderMap::new();
         map.append(s::DATE, FOO);
         map.append(s::DATE, FOO);
+        assert_eq!(map.get_all(&s::DATE).count(), 2);
         assert_eq!(map.len(), 2);
         assert_field!(map, &[s::DATE, s::DATE]);
     }
