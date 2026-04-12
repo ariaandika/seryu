@@ -237,9 +237,9 @@ impl HeaderMap {
     ///
     /// let mut map = HeaderMap::new();
     /// map.insert(CONTENT_TYPE, HeaderValue::from_static(b"text/html"));
-    /// assert_eq!(map.get(CONTENT_TYPE).unwrap().as_str(), "text/html");
+    /// assert_eq!(map.get(&CONTENT_TYPE).unwrap().as_str(), "text/html");
     ///
-    /// let ctype = map.get(CONTENT_TYPE);
+    /// let ctype = map.get(&CONTENT_TYPE);
     /// ```
     #[inline]
     pub fn get(&self, name: &HeaderName) -> Option<&HeaderValue> {

@@ -25,8 +25,8 @@
 //! map.insert(CONTENT_LENGTH, HeaderValue::from_static(b"128"));
 //!
 //! // header lookup
-//! assert!(map.contains_key(CONTENT_LENGTH));
-//! assert_eq!(map.get(CONTENT_LENGTH), Some(&HeaderValue::from_static(b"128")));
+//! assert!(map.contains_key(&CONTENT_LENGTH));
+//! assert_eq!(map.get(&CONTENT_LENGTH), Some(&HeaderValue::from_static(b"128")));
 //!
 //! // `HeaderMap` is a multimap
 //! let cookie: String = user.cookie();
@@ -69,8 +69,7 @@ mod name;
 mod value;
 mod field;
 
-#[doc(hidden)] // experimental
-pub mod map2;
+mod map2;
 
 pub mod error;
 
