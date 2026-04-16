@@ -10,6 +10,8 @@
 //! - [`Full`] single chunk buffered body
 //!
 
+mod chunked;
+
 // === impl Body ===
 mod full;
 
