@@ -17,60 +17,6 @@ impl std::fmt::Display for UnknownMethod {
     }
 }
 
-// ===== Parsing Error =====W
-
-/// HTTP Parsing error.
-#[derive(Debug)]
-pub enum ParseError {
-    /// Excessive bytes length.
-    ExcessiveBytes,
-    /// Request line have invalid separator
-    InvalidSeparator,
-    /// Unknown Method.
-    UnknownMethod,
-    /// Invalid character in method.
-    InvalidMethod,
-    /// Invalid character in request target.
-    InvalidTarget,
-    /// Unsupported version.
-    UnsupportedVersion,
-    /// Invalid header name.
-    InvalidHeader,
-    /// Host header and absolute/authority request target is missmatch.
-    MissmatchHost,
-}
-
-impl std::error::Error for ParseError {}
-
-impl std::fmt::Display for ParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            Self::ExcessiveBytes => f.write_str("request line too long"),
-            Self::InvalidSeparator => f.write_str("invalid separator"),
-            Self::UnknownMethod => f.write_str("unknown method"),
-            Self::InvalidMethod => f.write_str("invalid method"),
-            Self::InvalidTarget => f.write_str("invalid request target"),
-            Self::UnsupportedVersion => f.write_str("unsupported version"),
-            Self::InvalidHeader => f.write_str("invalid header"),
-            Self::MissmatchHost => f.write_str("missmatch host"),
-        }
-    }
-}
-
-impl From<UriError> for ParseError {
-    fn from(value: UriError) -> Self {
-        use UriError as U;
-        match value {
-            U::ExcessiveBytes => Self::ExcessiveBytes,
-            U::InvalidScheme
-            | U::InvalidAuthority
-            | U::InvalidPath
-            | U::InvalidHost
-            | U::InvalidPort => Self::InvalidTarget,
-        }
-    }
-}
-
 // ===== UriError =====
 
 /// An error that can occur during URI validation.
@@ -148,8 +94,6 @@ pub enum ProtoError {
     TooManyEncodings,
     /// Header parsing error.
     HeaderError(HeaderError),
-    /// HTTP Parsing error.
-    ParseError(ParseError),
 }
 
 impl std::error::Error for ProtoError {}
@@ -166,22 +110,7 @@ impl std::fmt::Display for ProtoError {
             Self::UnsupportedCodings => f.write_str("unsupported transfer codings"),
             Self::TooManyEncodings => f.write_str("too many chunked encodings"),
             Self::HeaderError(err) => write!(f, "header error: {err}"),
-            Self::ParseError(err) => write!(f, "parse error: {err}"),
         }
-    }
-}
-
-impl From<UriError> for ProtoError {
-    #[inline]
-    fn from(value: UriError) -> Self {
-        Self::ParseError(value.into())
-    }
-}
-
-impl From<ParseError> for ProtoError {
-    #[inline]
-    fn from(value: ParseError) -> Self {
-        Self::ParseError(value)
     }
 }
 

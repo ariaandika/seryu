@@ -9,24 +9,6 @@
 //! Additionally, it also provide a ready to use API that combine all components to run a server.
 //! It can also be used as an example to use and integrate each available components.
 //!
-//! ## Definitions
-//!
-//! - [`uri`] Uniform Resource Identifier ([RFC3986])
-//! - [`headers`] HTTP Header Fields ([RFC9110 Section 5])
-//! - [`http`] HTTP Semantics ([RFC9110])
-//!
-//! ## Behaviors
-//!
-//! - [`h1`] HTTP/1.1 ([RFC9112])
-//!
-//! ## User Abstraction
-//!
-//! - [`service`] abstract user defined logic
-//!
-//! ## Integrations
-//!
-//! - [`server`] all in one API to run a http server
-//!
 //! # Usage
 //!
 //! User can use each APIs individually to build custom server, or use available APIs from
@@ -59,10 +41,6 @@ pub mod response;
 pub mod error;
 
 pub mod date;
-
-pub mod h1;
-pub mod service;
-pub mod server;
 
 // ===== reexports =====
 pub use tcio::bytes;
