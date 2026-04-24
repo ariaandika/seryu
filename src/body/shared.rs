@@ -3,7 +3,7 @@ use std::ptr::NonNull;
 use std::task::Poll::{self, *};
 use std::task::ready;
 use std::{cmp, io, mem};
-use tcio::bytes::{Bytes, BytesMut};
+use tcio::bytes::BytesMut;
 
 use crate::body::decoder::Decoder;
 use crate::body::error::ReadError;
@@ -15,7 +15,7 @@ enum Shared {
         is_to_end: bool,
     },
     Ok {
-        data: Bytes,
+        data: BytesMut,
         // is this the last body chunk
         is_eof: bool,
     },
@@ -102,7 +102,7 @@ impl Handle {
             return Pending;
         }
 
-        let data = unsafe { read_buffer.split_to_unchecked(read as usize).freeze() };
+        let data = unsafe { read_buffer.split_to_unchecked(read as usize) };
 
         decoder.advance(read);
         self.shared = S::Ok {
@@ -114,15 +114,23 @@ impl Handle {
     }
 }
 
-impl HandleRef<'_> {
-    pub fn poll_read(&mut self) -> Poll<Option<Result<Bytes, ReadError>>> {
+impl<'a> HandleRef<'a> {
+    pub fn poll_read(&mut self) -> Poll<Option<Result<BytesMut, ReadError>>> {
+        self.poll_read_inner(false)
+    }
+
+    pub fn read_to_end(self) -> HandleReadToEnd<'a> {
+        HandleReadToEnd(self)
+    }
+
+    fn poll_read_inner(&mut self, is_to_end: bool) -> Poll<Option<Result<BytesMut, ReadError>>> {
         use Shared as S;
 
         let shared = unsafe { self.shared.as_mut() };
 
         match shared {
             S::None => {
-                *shared = S::Read { is_to_end: false };
+                *shared = S::Read { is_to_end };
                 Pending
             }
             S::Read { .. } => Pending,
@@ -133,6 +141,34 @@ impl HandleRef<'_> {
             }
             S::Eof => Ready(None),
             S::Error => Ready(Some(Err(ReadError::new()))),
+        }
+    }
+}
+
+pub struct HandleReadToEnd<'a>(HandleRef<'a>);
+
+impl Future for HandleReadToEnd<'_> {
+    type Output = Result<BytesMut, ReadError>;
+
+    fn poll(self: Pin<&mut Self>, _: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        let me = unsafe { &mut self.get_unchecked_mut().0 };
+        match ready!(me.poll_read_inner(true)?) {
+            Some(ok) => Ready(Ok(ok)),
+            None => Ready(Err(ReadError::new())),
+        }
+    }
+}
+
+// ===== std traits =====
+
+impl std::fmt::Debug for Shared {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Shared::None => write!(f, "None"),
+            Shared::Read { .. } => write!(f, "Read"),
+            Self::Ok { data, .. } => write!(f, "Ok(..{})", data.len()),
+            Self::Eof => write!(f, "Eof"),
+            Self::Error => write!(f, "Error"),
         }
     }
 }
@@ -149,14 +185,8 @@ impl std::fmt::Debug for HandleRef<'_> {
     }
 }
 
-impl std::fmt::Debug for Shared {
+impl std::fmt::Debug for HandleReadToEnd<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Shared::None => write!(f, "None"),
-            Shared::Read { .. } => write!(f, "Read"),
-            Self::Ok { data, .. } => write!(f, "Ok(..{})", data.len()),
-            Self::Eof => write!(f, "Eof"),
-            Self::Error => write!(f, "Error"),
-        }
+        f.debug_struct("HandleReadToEnd").finish_non_exhaustive()
     }
 }
