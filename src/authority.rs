@@ -250,10 +250,7 @@ pub(crate) const fn match_authority(bytes: &mut &[u8]) -> Result<u32, UriError> 
 
     // ===== port =====
 
-    loop {
-        let Some((digit, rest)) = bytes.split_first() else {
-            break;
-        };
+    while let Some((digit, rest)) = bytes.split_first() {
         if !digit.is_ascii_digit() {
             break;
         }
