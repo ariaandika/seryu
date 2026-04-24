@@ -14,7 +14,7 @@ pub(crate) struct ChunkedCoder {
     /// 0 => Eof,
     /// MAX => Header phase,
     /// _ => Chunk phase,
-    raw: u32
+    state: u32
 }
 
 /// Encoded chunk transfer data.
@@ -60,23 +60,27 @@ impl<B: Buf> Buf for EncodedChunk<B> {
 
 impl ChunkedCoder {
     pub(crate) fn new() -> Self {
-        Self { raw: u32::MAX }
+        Self { state: u32::MAX }
+    }
+
+    pub(super) fn new_from_state(state: u32) -> Self {
+        Self { state }
     }
 
     fn is_header_phase(&self) -> bool {
-        self.raw == u32::MAX
+        self.state == u32::MAX
     }
 
     pub fn is_eof(&self) -> bool {
-        self.raw == 0
+        self.state == 0
     }
 
     fn set_header_phase(&mut self) {
-        self.raw = u32::MAX
+        self.state = u32::MAX
     }
 
     fn set_eof_phase(&mut self) {
-        self.raw = 0;
+        self.state = 0;
     }
 
     /// Poll for chunked body, returns `None` if end of chunks found.
@@ -135,7 +139,7 @@ impl ChunkedCoder {
                 line.len() + 1
             };
 
-            self.raw = chunk_len;
+            self.state = chunk_len;
             buffer.advance(digits_len + suffix_len);
 
             if chunk_len == 0 {
@@ -145,7 +149,7 @@ impl ChunkedCoder {
 
         // `MAX_CHUNKED_SIZE` guarantee this will not truncate the chunk
         let read = buffer.len() as u32;
-        let remaining = self.raw;
+        let remaining = self.state;
 
         match remaining.checked_sub(read) {
             // buffer contains less than the remaining chunk
@@ -154,7 +158,7 @@ impl ChunkedCoder {
                 if leftover == 0 {
                     return Pending;
                 }
-                self.raw = leftover;
+                self.state = leftover;
                 Ready(Some(Ok(buffer.split())))
             },
             // buffer contains more than the remaining chunk
@@ -191,8 +195,8 @@ impl ChunkedCoder {
 
         const SUFFIX: &[u8; 7] = b"\r\n0\r\n\r\n";
 
-        // TODO: use non-fmt integer to hex
         use std::io::Write;
+        // PERF: change to use non-fmt integer to hex
         let _ = write!(write_buffer, "{:x}", data.remaining());
 
         write_buffer.extend_from_slice(b"\r\n");

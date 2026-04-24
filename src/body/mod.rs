@@ -1,9 +1,21 @@
 //! HTTP Body Message.
 
+// proto
 mod chunked;
+mod decoder;
 
-// === IO ===
-pub(crate) mod shared;
+// sync
+mod shared;
 
-// === Types ===
+// public api
+mod response;
+
+// error
 pub mod error;
+
+// ===== Summary =====
+
+pub(crate) use shared::Handle;
+
+pub use shared::HandleRef;
+pub use response::ResponseBody;
