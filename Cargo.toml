@@ -4,12 +4,4 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-tcio = { git = "https://github.com/ariaandika/tcio", features = ["tokio"] }
-tokio = { version = "1.46.1", features = ["net", "sync", "rt"] }
-
-# Optionals
-
-log = { version = "0.4.26", optional = true }
-
-[features]
-log = ["dep:log"]
+tcio = { git = "https://github.com/ariaandika/tcio" }

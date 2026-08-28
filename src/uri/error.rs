@@ -1,0 +1,55 @@
+use core::{error, fmt};
+
+// ===== UriError =====
+
+/// An error that can occur during URI validation.
+#[derive(Debug, Clone)]
+pub enum UriError {
+    /// Excessive bytes length.
+    ExcessiveBytes,
+    /// Invalid scheme.
+    InvalidScheme,
+    /// Invalid authority.
+    InvalidAuthority,
+    /// Invalid host.
+    InvalidHost,
+    /// Invalid port.
+    InvalidPort,
+    /// Invalid path.
+    InvalidPath,
+}
+
+// ===== Error =====
+
+macro_rules! gen_error {
+    ($($variant:pat => $msg:literal),* $(,)?) => {
+        impl UriError {
+            pub(crate) const fn panic_const(&self) -> ! {
+                use UriError::*;
+                match self {
+                    $($variant => panic!($msg),)*
+                }
+            }
+        }
+
+        impl fmt::Display for UriError {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                use UriError::*;
+                match self {
+                    $($variant => $msg.fmt(f),)*
+                }
+            }
+        }
+    };
+}
+
+gen_error! {
+    ExcessiveBytes => "excessive bytes length",
+    InvalidScheme => "invalid scheme",
+    InvalidAuthority => "invalid authority",
+    InvalidHost => "invalid host",
+    InvalidPort => "invalid port",
+    InvalidPath => "invalid path",
+}
+
+impl error::Error for UriError { }

@@ -1,8 +1,8 @@
 use std::str::FromStr;
 use tcio::bytes::Bytes;
 
-use crate::headers::matches;
-use crate::headers::error::HeaderError;
+use crate::http::headers::matches;
+use crate::http::headers::error::HeaderError;
 
 /// HTTP Header Value.
 ///

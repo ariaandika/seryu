@@ -67,13 +67,9 @@ pub(crate) mod matches;
 
 mod name;
 mod value;
-mod field;
-
-mod map2;
 
 pub mod error;
 
-pub use name::{HeaderName, standard, lookup};
+pub use name::{HeaderName, standard};
+pub use name::lookup;
 pub use value::HeaderValue;
-pub use field::HeaderField;
-pub use map2::HeaderMap;

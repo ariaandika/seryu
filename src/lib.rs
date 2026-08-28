@@ -21,34 +21,9 @@
 //! [RFC9112]: <https://www.rfc-editor.org/rfc/rfc9112.html>
 //! [RFC9113]: <https://www.rfc-editor.org/rfc/rfc9112.html>
 #![warn(missing_debug_implementations)]
+#![allow(clippy::module_inception)]
 
-mod log;
 mod matches;
 
-mod method;
-mod status;
-
-mod scheme;
-mod authority;
-mod target;
-mod uri;
-
-pub mod headers;
-
-pub mod body;
-pub mod request;
-pub mod response;
-pub mod error;
-
-pub mod date;
-
-// ===== reexports =====
-pub use tcio::bytes;
-
-pub use method::Method;
-pub use status::StatusCode;
-
-pub use scheme::Scheme;
-pub use authority::Authority;
-pub use target::Target;
-pub use uri::HttpUri;
+pub mod uri;
+pub mod http;

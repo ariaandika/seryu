@@ -1,7 +1,7 @@
 use tcio::bytes::Bytes;
 
-use crate::headers::matches;
-use crate::headers::error::HeaderError;
+use crate::http::headers::matches;
+use crate::http::headers::error::HeaderError;
 
 /// HTTP Header name.
 ///
@@ -78,10 +78,13 @@ impl HeaderName {
         }
     }
 
-    // # Safety
-    //
-    // `name` must be valid ASCII.
-    pub(crate) unsafe fn from_bytes_unchecked(name: Bytes) -> Self {
+    /// Create [`HeaderName`] from bytes without validation.
+    ///
+    /// # Safety
+    ///
+    /// `name` must be valid ASCII.
+    #[inline]
+    pub unsafe fn from_bytes_unchecked(name: Bytes) -> Self {
         debug_assert!(Self::from_slice(&name).is_ok());
         Self {
             repr: Repr::Arbitrary(name),
