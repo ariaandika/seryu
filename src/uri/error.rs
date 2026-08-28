@@ -52,4 +52,4 @@ gen_error! {
     InvalidPath => "invalid path",
 }
 
-impl error::Error for UriError { }
+impl error::Error for UriError {}

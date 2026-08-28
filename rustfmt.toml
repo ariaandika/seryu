@@ -1,0 +1,13 @@
+format_macro_bodies = false
+group_imports = "StdExternalCrate"
+imports_granularity = "Module"
+normalize_comments = true
+overflow_delimited_expr = true
+reorder_imports = true # default
+reorder_modules = true # default
+
+use_small_heuristics = "Max"
+chain_width = 60 # override the max heuristics
+
+# manual ordering for module and reexports is preferred
+ignore = ["**/**/mod.rs"]

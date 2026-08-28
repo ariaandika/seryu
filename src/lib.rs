@@ -20,8 +20,7 @@
 //! [RFC9110 Section 6]: <https://www.rfc-editor.org/rfc/rfc9110.html#name-message-abstraction>
 //! [RFC9112]: <https://www.rfc-editor.org/rfc/rfc9112.html>
 //! [RFC9113]: <https://www.rfc-editor.org/rfc/rfc9112.html>
-#![warn(missing_debug_implementations)]
-#![allow(clippy::module_inception)]
+#![allow(clippy::module_inception, clippy::new_without_default, clippy::len_without_is_empty)]
 
 mod matches;
 
