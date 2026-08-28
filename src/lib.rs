@@ -26,3 +26,4 @@ mod matches;
 
 pub mod uri;
 pub mod http;
+pub mod h1;

@@ -5,6 +5,8 @@ use core::{error, fmt};
 /// An error that can occur during URI validation.
 #[derive(Debug, Clone)]
 pub enum UriError {
+    /// Empty bytes.
+    Empty,
     /// Excessive bytes length.
     ExcessiveBytes,
     /// Invalid scheme.
@@ -44,6 +46,7 @@ macro_rules! gen_error {
 }
 
 gen_error! {
+    Empty => "invalid empty bytes",
     ExcessiveBytes => "excessive bytes length",
     InvalidScheme => "invalid scheme",
     InvalidAuthority => "invalid authority",
