@@ -1,7 +1,7 @@
 use core::mem::MaybeUninit;
 use core::{result, slice};
 
-use crate::bytes::Reader;
+use crate::bytes::{InsufficientBuffer, Reader, Writer};
 use crate::h1::matches;
 
 // ===== Search =====
@@ -62,6 +62,27 @@ impl<'a> Header<'a> {
         parse_header::<DefaultSearch>(bytes, &mut me)?;
         // SAFETY: `parse_reqline` guarantee that its initialized
         Ok(unsafe { me.assume_init() })
+    }
+
+    /// Returns the required capacity to serialize header.
+    #[inline]
+    pub const fn serialize_len(&self) -> usize {
+        self.name.len() + self.value.len() + b": \r\n".len()
+    }
+
+    /// Serialize header to given writer.
+    #[inline]
+    pub const fn serialize(&self, writer: &mut Writer) -> Result<(), InsufficientBuffer> {
+        if writer.remaining() < self.serialize_len() {
+            return Err(InsufficientBuffer);
+        }
+        unsafe {
+            writer.write_unchecked(self.name);
+            writer.write_unchecked(b": ");
+            writer.write_unchecked(self.value);
+            writer.write_unchecked(b"\r\n");
+        }
+        Ok(())
     }
 }
 
@@ -131,6 +152,15 @@ fn test_parse_header() {
     let header = Header::parse(b"Host: example.com").unwrap();
     assert_eq!(header.name, b"Host");
     assert_eq!(header.value, b"example.com");
+}
+
+#[test]
+fn test_serialize_header() {
+    let mut buf = [const { MaybeUninit::uninit() }; 32];
+    let mut writer = Writer::new(&mut buf);
+    let header = Header { name: b"Host", value: b"example.com" };
+    header.serialize(&mut writer).unwrap();
+    assert_eq!(writer.init(), b"Host: example.com\r\n");
 }
 
 #[test]
