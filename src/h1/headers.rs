@@ -17,6 +17,12 @@ pub struct Header<'a> {
 }
 
 impl<'a> Header<'a> {
+    /// Creates new [`Header`].
+    #[inline]
+    pub const fn new(name: &'a [u8], value: &'a [u8]) -> Self {
+        Self { name, value }
+    }
+
     /// Parse header from raw bytes.
     #[inline]
     pub fn parse(bytes: &'a [u8]) -> Result<Self> {
@@ -45,6 +51,12 @@ impl<'a> Header<'a> {
             writer.write_unchecked(b"\r\n");
         }
         Ok(())
+    }
+
+    /// Serialize end of headers (`\r\n`).
+    #[inline]
+    pub const fn serialize_eoh(writer: &mut Writer) -> Result<(), InsufficientBuffer> {
+        writer.write(b"\r\n")
     }
 }
 
