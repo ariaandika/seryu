@@ -1,5 +1,7 @@
 use core::mem::MaybeUninit;
-use core::{ops, slice};
+use core::slice;
+
+use crate::bytes::InsufficientBuffer;
 
 /// Bytes writing helper.
 #[derive(Debug)]
@@ -15,78 +17,117 @@ impl<'a> Writer<'a> {
         Self { bytes, write: 0 }
     }
 
-    /// Returns total buffer capacity.
-    #[inline]
-    pub const fn capacity(&self) -> usize {
-        self.bytes.len()
-    }
-
     /// Returns the remaining buffer capacity.
     #[inline]
     pub const fn remaining(&self) -> usize {
-        self.bytes.len() - self.write
+        self.bytes.len()
     }
 
-    /// Returns the written bytes.
+    /// Returns the initialized bytes.
     #[inline]
-    pub const fn as_bytes(&self) -> &'a [u8] {
-        unsafe { slice::from_raw_parts(self.bytes.as_ptr().cast(), self.write) }
+    pub const fn init(&self) -> &[u8] {
+        unsafe { slice::from_raw_parts(self.bytes.as_ptr().sub(self.write).cast(), self.write) }
     }
 
-    /// Returns the written bytes.
+    /// Returns the initialized bytes.
     #[inline]
-    pub const fn as_mut_bytes(&mut self) -> &'a mut [u8] {
-        unsafe { slice::from_raw_parts_mut(self.bytes.as_mut_ptr().cast(), self.write) }
-    }
-
-    /// Returns the remaining unwritten bytes.
-    #[inline]
-    pub const fn remaining_mut(&mut self) -> &'a mut [MaybeUninit<u8>] {
+    pub const fn init_mut(&mut self) -> &mut [u8] {
         unsafe {
-            slice::from_raw_parts_mut(
-                self.bytes.as_mut_ptr().add(self.write),
-                self.bytes.len() - self.write,
-            )
+            slice::from_raw_parts_mut(self.bytes.as_mut_ptr().sub(self.write).cast(), self.write)
         }
     }
 
-    /// Set initialized bytes length.
+    /// Returns the remaining uninitialized bytes.
+    #[inline]
+    pub const fn uninit_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+        self.bytes
+    }
+}
+
+impl<'a> Writer<'a> {
+    /// Clear the initialized bytes.
+    ///
+    /// The remaining capacity will be restored to the initial buffer size.
+    #[inline]
+    pub const fn clear(&mut self) {
+        self.bytes = unsafe {
+            slice::from_raw_parts_mut(
+                self.bytes.as_mut_ptr().sub(self.write),
+                self.bytes.len() + self.write,
+            )
+        };
+        self.write = 0;
+    }
+
+    /// Assume the first `count` of bytes is initialized.
+    ///
+    /// The uninitialized buffer can be retrieved using [`Writer::uninit_mut`].
     ///
     /// # Safety
     ///
-    /// `new_len` of the buffer must be initialized.
+    /// The fist `count` of bytes must be initialized.
     #[inline]
-    pub const unsafe fn set_len(&mut self, new_len: usize) {
-        debug_assert!(new_len <= self.bytes.len());
-        self.write = new_len;
+    pub const unsafe fn assume_init_len(&mut self, count: usize) {
+        debug_assert!(count <= self.bytes.len());
+        self.bytes = unsafe {
+            slice::from_raw_parts_mut(self.bytes.as_mut_ptr().add(count), self.bytes.len() - count)
+        };
+        self.write += count;
     }
 
-    /// Write bytes from slice.
+    /// # Safety
+    ///
+    /// `len <= self.remaining()`
     #[inline]
-    pub fn write(&mut self, bytes: &[u8]) -> usize {
-        let c = self.remaining().min(bytes.len());
+    const unsafe fn write_inner(&mut self, ptr: *const u8, len: usize) {
+        debug_assert!(len <= self.remaining());
         unsafe {
             self.bytes
                 .as_mut_ptr()
-                .copy_from_nonoverlapping(bytes.as_ptr().cast(), c)
+                .copy_from_nonoverlapping(ptr.cast(), len);
+            self.assume_init_len(len);
         };
-        self.write += c;
-        c
     }
 }
 
-impl<'a> ops::Deref for Writer<'a> {
-    type Target = [u8];
-
+impl<'a> Writer<'a> {
+    /// Write bytes from slice that skips bounds checking.
+    ///
+    /// # Safety
+    ///
+    /// The buffer must have enough remaining capacity to contains the bytes.
+    ///
+    /// Or in other words: `bytes.len() <= self.remaining()`.
     #[inline]
-    fn deref(&self) -> &Self::Target {
-        self.as_bytes()
+    pub const unsafe fn write_unchecked(&mut self, bytes: &[u8]) {
+        debug_assert!(bytes.len() <= self.remaining());
+        // SAFETY: the caller safety guarantee
+        unsafe { self.write_inner(bytes.as_ptr(), bytes.len()) };
     }
-}
 
-impl<'a> ops::DerefMut for Writer<'a> {
+    /// Write bytes from slice.
+    ///
+    /// Returns an error if the remaining capacity is not enough to contains the bytes.
     #[inline]
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.as_mut_bytes()
+    pub const fn write(&mut self, bytes: &[u8]) -> Result<(), InsufficientBuffer> {
+        if bytes.len() > self.remaining() {
+            return Err(InsufficientBuffer);
+        }
+        // SAFETY: `bytes.len() <= self.remaining()`
+        unsafe { self.write_unchecked(bytes) };
+        Ok(())
+    }
+
+    /// Write bytes from slice.
+    ///
+    /// Returns the length of written bytes.
+    ///
+    /// Truncate the bytes if the remaining capacity is not enough to contains the bytes.
+    #[inline]
+    pub fn write_truncated(&mut self, bytes: &[u8]) -> usize {
+        let len = self.remaining().min(bytes.len());
+        // SAFETY: `len <= self.remaining()`
+        unsafe { self.write_inner(bytes.as_ptr(), len) };
+        len
     }
 }
