@@ -1,7 +1,7 @@
 use std::mem::MaybeUninit;
 
 use crate::bytes::Reader;
-use crate::h1::{self, DefaultSearch};
+use crate::h1::{self, DefaultSearch, Headers};
 
 #[test]
 fn test_message() {
@@ -12,20 +12,19 @@ fn test_message() {
     assert_eq!(line, b"GET / HTTP/1.1");
 
     let mut headers = [const { MaybeUninit::uninit() }; 32];
-    let mut n = 0;
+    let mut headers = Headers::new(&mut headers);
 
     loop {
         let line = h1::parse_line::<DefaultSearch>(&mut reader).unwrap();
         if line.is_empty() {
             break;
         }
-        h1::parse_header::<DefaultSearch>(line, &mut headers[n]).unwrap();
-        n += 1;
+        headers.parse_header::<DefaultSearch>(line).unwrap();
     }
 
     assert!(!reader.has_remaining());
 
-    let headers = unsafe { headers[..n].assume_init_ref() };
+    let headers = headers.get();
     assert_eq!(headers.len(), 2);
 
     let expect = [(&b"Host"[..], &b"example.com"[..]), (b"Content-Type", b"127")];

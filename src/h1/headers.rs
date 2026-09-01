@@ -1,7 +1,7 @@
-use core::mem::MaybeUninit;
+use core::mem::{self, MaybeUninit};
 use core::{result, slice};
 
-use crate::bytes::{InsufficientBuffer, Reader, Writer};
+use crate::bytes::{InsufficientBuffer, Writer};
 use crate::h1::line::{DefaultSearch, Search};
 use crate::h1::matches;
 
@@ -62,33 +62,45 @@ pub const fn parse_header<'a, S: Search>(
     Ok(())
 }
 
-/// Parse headers from raw bytes.
-pub fn parse_headers<'a, 'h, S: Search>(
-    bytes: &mut Reader<'a>,
-    buf: &'h mut [MaybeUninit<Header<'a>>],
-) -> Result<&'h mut [Header<'a>]> {
-    let mut n = 0;
-    loop {
-        let Some(line) = S::find_as_bytes(bytes.as_bytes(), b'\n') else {
-            return Err(HeaderError::MissingEndOfHeaders);
-        };
+// ===== Headers =====
 
-        let header = line.trim_ascii_end();
-        if header.is_empty() {
-            bytes.assume_read_len(line.len());
-            break;
-        }
+#[derive(Debug)]
+pub struct Headers<'a, 'b> {
+    buf: &'a mut [MaybeUninit<Header<'b>>],
+    len: usize,
+}
 
-        let Some(output) = buf.get_mut(n) else {
+impl<'a, 'b> Headers<'a, 'b> {
+    #[inline]
+    pub const fn new(buf: &'a mut [MaybeUninit<Header<'b>>]) -> Self {
+        Self { buf, len: 0 }
+    }
+
+    #[inline]
+    pub const fn get(&self) -> &'a [Header<'b>] {
+        unsafe { slice::from_raw_parts(self.buf.as_ptr().sub(self.len).cast(), self.len) }
+    }
+
+    #[inline]
+    pub const fn remaining(&self) -> usize {
+        self.buf.len()
+    }
+
+    #[inline]
+    pub const fn has_remaining(&self) -> bool {
+        self.remaining() != 0
+    }
+
+    #[inline]
+    pub fn parse_header<S: Search>(&mut self, bytes: &'b [u8]) -> Result<()> {
+        let Some((header, rest)) = mem::take(&mut self.buf).split_first_mut() else {
             return Err(HeaderError::InsufficientHeaderBuf);
         };
-        output.write(Header::parse(header)?);
-
-        n += 1;
-        bytes.assume_read_len(line.len());
+        parse_header::<S>(bytes, header)?;
+        self.buf = rest;
+        self.len += 1;
+        Ok(())
     }
-    // SAFETY: `n` tracks the initialized headers
-    Ok(unsafe { slice::from_raw_parts_mut(buf.as_mut_ptr().cast(), n) })
 }
 
 // ===== errors =====
@@ -123,20 +135,4 @@ fn test_serialize_header() {
     let header = Header { name: b"Host", value: b"example.com" };
     header.serialize(&mut writer).unwrap();
     assert_eq!(writer.init(), b"Host: example.com\r\n");
-}
-
-#[test]
-fn test_parse_headers() {
-    let mut headers = [const { MaybeUninit::uninit() }; 32];
-    let bytes = concat!("Host: example.com\r\n", "Content-Length: 472\r\n", "\r\n",).as_bytes();
-
-    let mut reader = Reader::new(bytes);
-    let headers = parse_headers::<DefaultSearch>(&mut reader, &mut headers).unwrap();
-
-    assert!(!reader.has_remaining());
-    assert_eq!(headers.len(), 2);
-    assert_eq!(headers[0].name, b"Host");
-    assert_eq!(headers[0].value, b"example.com");
-    assert_eq!(headers[1].name, b"Content-Length");
-    assert_eq!(headers[1].value, b"472");
 }
