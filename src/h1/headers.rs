@@ -2,46 +2,8 @@ use core::mem::MaybeUninit;
 use core::{result, slice};
 
 use crate::bytes::{InsufficientBuffer, Reader, Writer};
+use crate::h1::line::{DefaultSearch, Search};
 use crate::h1::matches;
-
-// ===== Search =====
-
-/// Bytes searching implementation.
-///
-/// Use [`DefaultSearch`] to use default sequential searching.
-///
-/// # Safety
-///
-/// [`Search::find`] must returns index within bounds of `bytes`.
-pub unsafe trait Search {
-    /// Search `byte` in `bytes` and returns the index.
-    fn find(bytes: &[u8], byte: u8) -> Option<usize>;
-
-    #[inline]
-    fn find_as_bytes(bytes: &[u8], byte: u8) -> Option<&[u8]> {
-        let pos = Self::find(bytes, byte)?;
-        // SAFETY: `Search` implementation guarantee that the index is in bounds
-        unsafe { Some(bytes.get_unchecked(..pos + 1)) }
-    }
-
-    #[inline]
-    fn split_byte(bytes: &[u8], byte: u8) -> Option<(&[u8], &[u8])> {
-        let pos = Self::find(bytes, byte)?;
-        // SAFETY: `Search` implementation guarantee that the index is in bounds
-        unsafe { Some(bytes.split_at_unchecked(pos + 1)) }
-    }
-}
-
-/// Sequential search implementation of [`Search`].
-#[derive(Debug)]
-pub struct DefaultSearch;
-
-unsafe impl Search for DefaultSearch {
-    #[inline]
-    fn find(bytes: &[u8], byte: u8) -> Option<usize> {
-        bytes.iter().position(|&b| b == byte)
-    }
-}
 
 // ===== Header =====
 
