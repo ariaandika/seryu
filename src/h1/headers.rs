@@ -92,7 +92,7 @@ pub fn parse_headers<'a, 'h, S: Search>(
 
         let header = line.trim_ascii_end();
         if header.is_empty() {
-            bytes.read(line.len());
+            bytes.assume_read_len(line.len());
             break;
         }
 
@@ -102,7 +102,7 @@ pub fn parse_headers<'a, 'h, S: Search>(
         output.write(Header::parse(header)?);
 
         n += 1;
-        bytes.read(line.len());
+        bytes.assume_read_len(line.len());
     }
     // SAFETY: `n` tracks the initialized headers
     Ok(unsafe { slice::from_raw_parts_mut(buf.as_mut_ptr().cast(), n) })
@@ -141,7 +141,7 @@ fn test_parse_headers() {
     let mut reader = Reader::new(bytes);
     let headers = parse_headers::<DefaultSearch>(&mut reader, &mut headers).unwrap();
 
-    assert!(reader.is_empty());
+    assert!(!reader.has_remaining());
     assert_eq!(headers.len(), 2);
     assert_eq!(headers[0].name, b"Host");
     assert_eq!(headers[0].value, b"example.com");

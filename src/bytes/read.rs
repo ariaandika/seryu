@@ -1,4 +1,4 @@
-use core::{ops, slice};
+use core::slice;
 
 /// Bytes reading helper.
 ///
@@ -16,10 +16,16 @@ impl<'a> Reader<'a> {
         Self { bytes, read: 0 }
     }
 
-    /// Returns the read bytes count.
+    /// Returns the remaining bytes length.
     #[inline]
-    pub const fn read_len(&self) -> usize {
-        self.read
+    pub const fn remaining(&self) -> usize {
+        self.bytes.len()
+    }
+
+    /// Returns `true` if there is still remaining bytes.
+    #[inline]
+    pub const fn has_remaining(&self) -> bool {
+        self.remaining() != 0
     }
 
     /// Returns the remaining bytes.
@@ -27,38 +33,40 @@ impl<'a> Reader<'a> {
     pub const fn as_bytes(&self) -> &'a [u8] {
         self.bytes
     }
+}
 
-    /// Mark `count` bytes as read.
-    ///
-    /// Note that this will not mark past the remaining bytes.
-    #[inline]
-    pub fn read(&mut self, count: usize) {
-        let count = self.bytes.len().min(count);
-        self.read += count;
-        self.bytes = unsafe { self.bytes.get_unchecked(count..) };
-    }
-
+impl<'a> Reader<'a> {
     /// Reset the read bytes offset.
+    ///
+    /// This will set reader to contains the initial bytes.
     #[inline]
     pub const fn reset(&mut self) {
-        let len = self.read + self.bytes.len();
-        self.bytes = unsafe { slice::from_raw_parts(self.bytes.as_ptr().sub(self.read), len) };
+        self.bytes = unsafe {
+            slice::from_raw_parts(self.bytes.as_ptr().sub(self.read), self.read + self.remaining())
+        };
         self.read = 0;
     }
-}
 
-impl ops::Deref for Reader<'_> {
-    type Target = [u8];
-
+    /// Assume `count` bytes has been read.
     #[inline]
-    fn deref(&self) -> &Self::Target {
-        self.bytes
+    pub fn assume_read_len(&mut self, count: usize) {
+        let count = self.remaining().min(count);
+        self.bytes = unsafe {
+            slice::from_raw_parts(self.bytes.as_ptr().add(count), self.remaining() - count)
+        };
+        self.read += count;
     }
-}
 
-impl<'a> From<&'a [u8]> for Reader<'a> {
+    /// Read `N` chunk of bytes.
+    ///
+    /// Returns `None` if the remaining bytes is less than chunk length.
     #[inline]
-    fn from(value: &'a [u8]) -> Self {
-        Self::new(value)
+    pub const fn read_chunk<const N: usize>(&mut self) -> Option<&'a [u8; N]> {
+        let Some(remain) = self.bytes.len().checked_sub(N) else {
+            return None;
+        };
+        let base = self.bytes.as_ptr();
+        self.bytes = unsafe { slice::from_raw_parts(base.add(N), remain) };
+        unsafe { Some(base.cast::<[u8; N]>().as_ref_unchecked()) }
     }
 }
