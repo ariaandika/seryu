@@ -33,6 +33,12 @@ impl<'a> Reader<'a> {
     pub const fn as_bytes(&self) -> &'a [u8] {
         self.bytes
     }
+
+    /// Returns the bytes length that have been read.
+    #[inline]
+    pub const fn read_len(&self) -> usize {
+        self.read
+    }
 }
 
 impl<'a> Reader<'a> {

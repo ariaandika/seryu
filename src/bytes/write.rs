@@ -23,6 +23,12 @@ impl<'a> Writer<'a> {
         self.bytes.len()
     }
 
+    /// Returns the bytes length that have been written.
+    #[inline]
+    pub const fn write_len(&self) -> usize {
+        self.write
+    }
+
     /// Returns the initialized bytes.
     #[inline]
     pub const fn init(&self) -> &[u8] {
