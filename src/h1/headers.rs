@@ -1,5 +1,7 @@
 use core::mem::MaybeUninit;
+use core::{result, slice};
 
+use crate::bytes::Reader;
 use crate::h1::matches;
 
 // ===== Search =====
@@ -14,6 +16,13 @@ use crate::h1::matches;
 pub unsafe trait Search {
     /// Search `byte` in `bytes` and returns the index.
     fn find(bytes: &[u8], byte: u8) -> Option<usize>;
+
+    #[inline]
+    fn find_as_bytes(bytes: &[u8], byte: u8) -> Option<&[u8]> {
+        let pos = Self::find(bytes, byte)?;
+        // SAFETY: `Search` implementation guarantee that the index is in bounds
+        unsafe { Some(bytes.get_unchecked(..pos + 1)) }
+    }
 
     #[inline]
     fn split_byte(bytes: &[u8], byte: u8) -> Option<(&[u8], &[u8])> {
@@ -36,6 +45,9 @@ unsafe impl Search for DefaultSearch {
 
 // ===== Header =====
 
+/// Raw header name and value.
+///
+/// Note that this does not guarantee for valid header name or value characters.
 #[derive(Debug)]
 pub struct Header<'a> {
     pub name: &'a [u8],
@@ -43,20 +55,22 @@ pub struct Header<'a> {
 }
 
 impl<'a> Header<'a> {
+    /// Parse header from raw bytes.
     #[inline]
-    pub fn parse(header: &'a [u8]) -> Result<Self, HeaderError> {
+    pub fn parse(bytes: &'a [u8]) -> Result<Self> {
         let mut me = MaybeUninit::uninit();
-        parse_header::<DefaultSearch>(header, &mut me)?;
+        parse_header::<DefaultSearch>(bytes, &mut me)?;
         // SAFETY: `parse_reqline` guarantee that its initialized
         Ok(unsafe { me.assume_init() })
     }
 }
 
+/// Parse header from raw bytes.
 #[inline]
 pub const fn parse_header<'a, S: Search>(
     header: &'a [u8],
     output: &mut MaybeUninit<Header<'a>>,
-) -> Result<(), HeaderError> {
+) -> Result<()> {
     let Some((name, val)) = matches::split_to_delim(header, b':') else {
         return Err(HeaderError::InvalidSeparator);
     };
@@ -65,72 +79,72 @@ pub const fn parse_header<'a, S: Search>(
     Ok(())
 }
 
-// ===== Headers =====
+/// Parse headers from raw bytes.
+pub fn parse_headers<'a, 'h, S: Search>(
+    bytes: &mut Reader<'a>,
+    buf: &'h mut [MaybeUninit<Header<'a>>],
+) -> Result<&'h mut [Header<'a>]> {
+    let mut n = 0;
+    loop {
+        let Some(line) = S::find_as_bytes(bytes.as_bytes(), b'\n') else {
+            return Err(HeaderError::MissingEndOfHeaders);
+        };
 
-#[derive(Debug)]
-pub struct Headers<'a, 'b> {
-    bytes: &'b [u8],
-    headers: &'a mut [MaybeUninit<Header<'b>>],
-    len: usize,
-}
-
-impl<'a, 'b> Headers<'a, 'b> {
-    /// Creates new [`Headers`].
-    #[inline]
-    pub fn new(bytes: &'b [u8], headers: &'a mut [MaybeUninit<Header<'b>>]) -> Self {
-        Self { bytes, headers, len: 0 }
-    }
-
-    /// Returns the raw headers bytes.
-    #[inline]
-    pub fn bytes(&self) -> &'b [u8] {
-        self.bytes
-    }
-
-    /// Returns the initialized headers.
-    ///
-    /// Note that after creating this struct, [`Headers::parse`] must be called to start parsing and
-    /// initializing the headers.
-    #[inline]
-    pub fn headers(&self) -> &'a [Header<'b>] {
-        unsafe { &*(self.headers.get_unchecked(..self.len) as *const _ as *const [Header<'b>]) }
-    }
-
-    /// Parse headers, returning how many bytes was consumed.
-    ///
-    /// Use [`Headers::headers`] to get the parsed headers.
-    pub fn parse<S: Search>(&mut self) -> Result<usize, HeaderError> {
-        let mut headers = self.bytes;
-        self.len = 0;
-
-        loop {
-            let Some((line, rest)) = S::split_byte(headers, b'\n') else {
-                return Err(HeaderError::InsufficientBytes);
-            };
-            headers = rest;
-
-            let header = line.trim_ascii_end();
-            if header.is_empty() {
-                break;
-            }
-
-            let Some(output) = self.headers.get_mut(self.len) else {
-                return Err(HeaderError::InsufficientBuf);
-            };
-            output.write(Header::parse(header)?);
-
-            self.len += 1;
+        let header = line.trim_ascii_end();
+        if header.is_empty() {
+            bytes.read(line.len());
+            break;
         }
 
-        Ok(headers.as_ptr().addr() - self.bytes.as_ptr().addr())
+        let Some(output) = buf.get_mut(n) else {
+            return Err(HeaderError::InsufficientHeaderBuf);
+        };
+        output.write(Header::parse(header)?);
+
+        n += 1;
+        bytes.read(line.len());
     }
+    // SAFETY: `n` tracks the initialized headers
+    Ok(unsafe { slice::from_raw_parts_mut(buf.as_mut_ptr().cast(), n) })
 }
 
 // ===== errors =====
 
+/// `Result` alias for header parsing result.
+pub type Result<T, E = HeaderError> = result::Result<T, E>;
+
+/// An error that may occur when parsing headers.
 #[derive(Debug)]
 pub enum HeaderError {
-    InsufficientBytes,
-    InsufficientBuf,
+    /// Given bytes does not contains the end of headers delimiter.
+    MissingEndOfHeaders,
+    /// Provided header buffer is insufficient.
+    InsufficientHeaderBuf,
+    /// Invalid header separator.
     InvalidSeparator,
+}
+
+// ===== tests =====
+
+#[test]
+fn test_parse_header() {
+    let header = Header::parse(b"Host: example.com").unwrap();
+    assert_eq!(header.name, b"Host");
+    assert_eq!(header.value, b"example.com");
+}
+
+#[test]
+fn test_parse_headers() {
+    let mut headers = [const { MaybeUninit::uninit() }; 32];
+    let bytes = concat!("Host: example.com\r\n", "Content-Length: 472\r\n", "\r\n",).as_bytes();
+
+    let mut reader = Reader::new(bytes);
+    let headers = parse_headers::<DefaultSearch>(&mut reader, &mut headers).unwrap();
+
+    assert!(reader.is_empty());
+    assert_eq!(headers.len(), 2);
+    assert_eq!(headers[0].name, b"Host");
+    assert_eq!(headers[0].value, b"example.com");
+    assert_eq!(headers[1].name, b"Content-Length");
+    assert_eq!(headers[1].value, b"472");
 }
