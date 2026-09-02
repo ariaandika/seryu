@@ -4,12 +4,16 @@ use crate::bytes::{Reader, Writer};
 use crate::h1::{self, DefaultSearch, Headers, RequestLine};
 
 #[test]
-fn test_parse_message() {
+fn test_parse_request() {
     let message = b"GET / HTTP/1.1\r\nHost:  example.com\r\nContent-Length:127\n\n";
     let mut reader = Reader::new(message);
 
     let line = h1::parse_line::<DefaultSearch>(&mut reader).unwrap();
-    assert_eq!(line, b"GET / HTTP/1.1");
+    let reqline = RequestLine::parse(line).unwrap();
+
+    assert_eq!(reqline.method, b"GET");
+    assert_eq!(reqline.target, b"/");
+    assert_eq!(reqline.version, b"HTTP/1.1");
 
     let mut headers = [const { MaybeUninit::uninit() }; 32];
     let mut headers = Headers::new(&mut headers);
@@ -39,7 +43,7 @@ fn test_parse_message() {
 }
 
 #[test]
-fn test_serialize_message() {
+fn test_serialize_request() {
     let reqline = RequestLine { method: b"GET", target: b"/", version: b"HTTP/1.1" };
 
     let headers =

@@ -44,10 +44,10 @@ impl<'a> RequestLine<'a> {
     }
 }
 
-pub fn parse_reqline<'a>(
-    reqline: &'a [u8],
-    output: &mut MaybeUninit<RequestLine<'a>>,
-) -> Result<(), ReqlineError> {
+pub fn parse_reqline<'a, 'b>(
+    reqline: &'b [u8],
+    output: &'a mut MaybeUninit<RequestLine<'b>>,
+) -> Result<&'a mut RequestLine<'b>, ReqlineError> {
     const VERSION_SIZE: usize = b" HTTP/1.1".len();
 
     let Some(remaining) = reqline.len().checked_sub(VERSION_SIZE) else {
@@ -79,8 +79,9 @@ pub fn parse_reqline<'a>(
         (&raw mut (*out).method).write(method);
         // SAFETY: `rest` contains the leading whitespace
         (&raw mut (*out).target).write(rest.get_unchecked(1..));
+
+        Ok(output.assume_init_mut())
     }
-    Ok(())
 }
 
 // ===== errors =====
