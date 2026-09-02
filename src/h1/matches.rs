@@ -25,9 +25,11 @@ pub const unsafe fn split_at_delim(bytes: &[u8], at: usize) -> (&[u8], &[u8]) {
 }
 
 macro_rules! write_field {
-    ($o:ident.$f:ident, $v:expr) => {
-        unsafe { (&raw mut (*$o.as_mut_ptr()).$f).write($v) };
-    };
+    ($o:ident.$f:ident, $v:expr) => {{
+        // dont put it in unsafe context
+        let val = $v;
+        unsafe { (&raw mut (*$o.as_mut_ptr()).$f).write(val) };
+    }};
 }
 
 pub(super) use write_field;

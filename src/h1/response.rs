@@ -50,10 +50,10 @@ impl<'a> StatusLine<'a> {
 }
 
 pub fn parse_status_line<'a>(
-    status_line: &'a [u8],
+    line: &'a [u8],
     output: &mut MaybeUninit<StatusLine<'a>>,
 ) -> Result<(), ReqlineError> {
-    let Some((prefix, rest)) = status_line.split_first_chunk::<PREFIX_SIZE>() else {
+    let Some((prefix, rest)) = line.split_first_chunk::<PREFIX_SIZE>() else {
         return Err(ReqlineError::Insufficient);
     };
 
@@ -64,11 +64,26 @@ pub fn parse_status_line<'a>(
         return Err(ReqlineError::InvalidSeparator);
     }
 
-    let p = prefix.as_ptr();
-    matches::write_field!(output.version, &*p.cast::<[u8; VERSION_SIZE]>());
-    matches::write_field!(output.status, &*p.add(VERSION_SIZE + 1).cast::<[u8; STATUS_SIZE]>());
+    let (version, status) = split_array::<{ VERSION_SIZE + 1 }, { STATUS_SIZE + 1 }, _>(prefix);
+
+    matches::write_field!(output.version, shrink_array(version));
+    matches::write_field!(output.status, shrink_array(status));
     matches::write_field!(output.reason, rest);
     Ok(())
+}
+
+const fn split_array<const O1: usize, const O2: usize, const I: usize>(
+    arr: &[u8; I],
+) -> (&[u8; O1], &[u8; O2]) {
+    const { assert!(O1 + O2 == I) };
+    // SAFETY: `O1 + O2 == I`
+    unsafe { (shrink_array(arr), &*arr.as_ptr().add(O1).cast()) }
+}
+
+const fn shrink_array<const I: usize, const O: usize>(arr: &[u8; I]) -> &[u8; O] {
+    const { assert!(O < I) };
+    // SAFETY: `O < I`
+    unsafe { &*arr.as_ptr().cast() }
 }
 
 // ===== tests =====
