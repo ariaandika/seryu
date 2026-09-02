@@ -41,11 +41,17 @@ unsafe impl Search for DefaultSearch {
 
 // ===== parsers =====
 
-pub fn parse_line<'a, S: Search>(bytes: &mut Reader<'a>) -> Result<&'a [u8], InsufficientBuffer> {
-    let Some(line) = S::find_as_bytes(bytes.as_bytes(), b'\n') else {
+/// Read a CRLF delimited line.
+///
+/// Advance `reader` to consume the line, and returns the line without its delimiter.
+///
+/// This function also accepts bare LF delimiter.
+#[inline]
+pub fn parse_line<'a, S: Search>(reader: &mut Reader<'a>) -> Result<&'a [u8], InsufficientBuffer> {
+    let Some(line) = S::find_as_bytes(reader.as_bytes(), b'\n') else {
         return Err(InsufficientBuffer);
     };
-    bytes.assume_read_len(line.len());
+    reader.assume_read_len(line.len());
     let suffix = line.last_chunk::<2>().filter(|s| s[0] == b'\r').is_some() as usize;
     Ok(unsafe { line.get_unchecked(..line.len() - (suffix + 1)) })
 }

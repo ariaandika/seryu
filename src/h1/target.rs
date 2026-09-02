@@ -1,17 +1,67 @@
+//! `HTTP/1.1` Message Request Target.
+//!
+//! There are four distinct formats for the `request-target`, depending on both the method being
+//! requested and whether the request is to a proxy.
+//!
+//! No whitespace is allowed in the `request-target`.
+//!
+//! ```not_rust
+//! request-target = origin-form
+//!                / absolute-form
+//!                / authority-form
+//!                / asterisk-form
+//! ```
+//!
+//! ## Origin Form
+//!
+//! When making a request directly to an origin server, other than a CONNECT or server-wide OPTIONS
+//! request, a client MUST send only the absolute path and query components of the target URI as the
+//! `request-target`. If the target URI's path component is empty, the client MUST send "/" as the
+//! path within the `origin-form` of `request-target`.
+//!
+//! ```not_rust
+//! origin-form    = absolute-path [ "?" query ]
+//! ```
+//!
+//! ## Absolute Form
+//!
+//! When making a request to a proxy, other than a `CONNECT` or server-wide `OPTIONS` request, a
+//! client MUST send the target URI in `absolute-form` as the `request-target`.
+//!
+//! ```not_rust
+//! absolute-form  = absolute-URI
+//! ```
+//!
+//! A server MUST accept the `absolute-form` in requests even though most `HTTP/1.1` clients will
+//! only send the `absolute-form` to a proxy.
+//!
+//! ## Authority Form
+//!
+//! The `authority-form` of `request-target` is only used for CONNECT requests.
+//!
+//! ```not_rust
+//! authority-form = uri-host ":" port
+//! ```
+//!
+//! ## Asterisk Form
+//!
+//! The `asterisk-form` of `request-target` is only used for a server-wide OPTIONS request.
+//!
+//! ```not_rust
+//! asterisk-form  = "*"
+//! ```
 use crate::matches;
 use crate::uri::UriError;
 
 // ===== Origin =====
 
-/// Origin form request target.
+/// Origin Form Request Target.
 ///
-/// `Target` contains [path] and optional [query] component from URI.
+/// Origin form contains absolute path and query components of the target URI.
 ///
-/// `Target` is retrieved from `HTTP/1.1` request target in request line, or `:path` pseudo-header
-/// in `HTTP/2.0`.
-///
-/// [path]: <https://www.rfc-editor.org/info/rfc3986/#section-3.3>
-/// [query]: <https://www.rfc-editor.org/info/rfc3986/#section-3.4>
+/// ```not_rust
+/// origin-form    = absolute-path [ "?" query ]
+/// ```
 #[derive(Debug, Default)]
 pub struct Origin<'a> {
     pub path: &'a [u8],
@@ -21,11 +71,7 @@ pub struct Origin<'a> {
 impl<'a> Origin<'a> {
     /// Parse request target as `origin-form`.
     ///
-    /// Use [`Form::from_prefix`] to checks the target form.
-    ///
-    /// ```not_rust
-    /// origin-form     = absolute-path [ "?" query ]
-    /// ```
+    /// See the struct documentation for more details on the syntax.
     #[inline]
     pub const fn parse(target: &'a [u8]) -> Result<Self, UriError> {
         let mut origin = Self { path: &[], query: None };
@@ -60,12 +106,9 @@ matches::ascii_lookup_table! {
 
 /// Parse request target as `origin-form`.
 ///
-/// Use [`Form::from_prefix`] to checks the target form.
-///
-/// ```not_rust
-/// origin-form     = absolute-path [ "?" query ]
-/// ```
+/// See [`Origin`] for more details on the syntax.
 pub const fn parse_origin<'a>(target: &'a [u8], output: &mut Origin<'a>) -> Result<(), UriError> {
+    // origin-form      = absolute-path [ "?" query ]
     // absolute-path    = 1*( "/" segment )
     // segment          = *pchar
 

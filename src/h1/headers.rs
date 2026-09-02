@@ -9,7 +9,12 @@ use crate::h1::matches;
 
 /// Raw header name and value.
 ///
-/// Note that this does not guarantee for valid header name or value characters.
+/// Each field line consists of a `case-insensitive` field name followed by a colon, optional
+/// leading whitespace, the field line value, and optional trailing whitespace.
+///
+/// ```not_rust
+/// field-line   = field-name ":" OWS field-value OWS
+/// ```
 #[derive(Debug)]
 pub struct Header<'a> {
     pub name: &'a [u8],

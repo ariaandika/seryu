@@ -3,7 +3,22 @@ use core::{error, fmt};
 
 use crate::bytes::{InsufficientBuffer, Writer};
 
-/// Request line raw bytes components.
+/// `HTTP/1.1` Message Request line.
+///
+/// A `request-line` begins with a method token, followed by a single space, the `request-target`,
+/// and another single space, and ends with the protocol version.
+///
+/// ```not_rust
+/// request-line   = method SP request-target SP HTTP-version
+/// ```
+///
+/// See [`Method`] and [`Version`] for more details on `method` and `version`.
+///
+/// See [`target`] for more details on `request-target`.
+///
+/// [`Method`]: crate::http::Method
+/// [`Version`]: crate::http::Version
+/// [`target`]: crate::h1::target
 #[derive(Debug, Default, Clone)]
 pub struct RequestLine<'a> {
     pub method: &'a [u8],
@@ -12,6 +27,9 @@ pub struct RequestLine<'a> {
 }
 
 impl<'a> RequestLine<'a> {
+    /// Parse [`RequestLine`] from raw bytes.
+    ///
+    /// See the struct documentation for more details on the syntax.
     #[inline]
     pub fn parse(reqline: &'a [u8]) -> Result<Self, ReqlineError> {
         let mut me = MaybeUninit::uninit();
@@ -23,10 +41,12 @@ impl<'a> RequestLine<'a> {
     /// Returns the required capacity to serialize request line.
     #[inline]
     pub const fn serialize_len(&self) -> usize {
-        self.method.len() + self.target.len() + self.version.len() + b"  \r\n".len()
+        self.method.len() + self.target.len() + self.version.len() + 4 /*SP SP CR LF*/
     }
 
-    /// Serialize request line to given writer.
+    /// Serialize request line with CRLF suffix to the given writer.
+    ///
+    /// See the struct documentation for more details on the syntax.
     #[inline]
     pub const fn serialize(&self, writer: &mut Writer) -> Result<(), InsufficientBuffer> {
         if writer.remaining() < self.serialize_len() {
@@ -44,6 +64,9 @@ impl<'a> RequestLine<'a> {
     }
 }
 
+/// Parse request line.
+///
+/// See [`RequestLine`] for more details.
 pub fn parse_reqline<'a, 'b>(
     reqline: &'b [u8],
     output: &'a mut MaybeUninit<RequestLine<'b>>,

@@ -5,10 +5,32 @@ use crate::h1::{ReqlineError, matches};
 
 const VERSION_SIZE: usize = b"HTTP/1.1".len();
 const STATUS_SIZE: usize = 3;
-
 const PREFIX_SIZE: usize = VERSION_SIZE + 2 + STATUS_SIZE;
 
-/// Status line raw bytes components.
+/// `HTTP/1.1` Message Status Line.
+///
+/// The first line of a response message is the status-line, consisting of the protocol version, a
+/// space, the status code, and another space and ending with an OPTIONAL textual phrase describing
+/// the status code.
+///
+/// ```not_rust
+/// status-line = HTTP-version SP status-code SP [ reason-phrase ]
+/// ```
+///
+/// The `status-code` element is a 3-digit integer code describing the result of the server's
+/// attempt to understand and satisfy the client's corresponding request.
+///
+/// ```not_rust
+/// status-code    = 3DIGIT
+/// ```
+///
+/// The `reason-phrase` element exists for the sole purpose of providing a textual description
+/// associated with the numeric status code, mostly out of deference to earlier Internet application
+/// protocols that were more frequently used with interactive text clients.
+///
+/// ```not_rust
+/// reason-phrase  = 1*( HTAB / SP / VCHAR / obs-text )
+/// ```
 #[derive(Debug, Clone)]
 pub struct StatusLine<'a> {
     pub version: &'a [u8; VERSION_SIZE],
@@ -17,6 +39,9 @@ pub struct StatusLine<'a> {
 }
 
 impl<'a> StatusLine<'a> {
+    /// Parse [`StatusLine`] from raw bytes.
+    ///
+    /// See the struct documentation for more details on the syntax.
     #[inline]
     pub fn parse(status_line: &'a [u8]) -> Result<Self, ReqlineError> {
         let mut me = MaybeUninit::uninit();
@@ -31,7 +56,9 @@ impl<'a> StatusLine<'a> {
         PREFIX_SIZE + self.reason.len() + b"\r\n".len()
     }
 
-    /// Serialize status line to given writer.
+    /// Serialize status line with CRLF suffix to the given writer.
+    ///
+    /// See the struct documentation for more details on the syntax.
     #[inline]
     pub const fn serialize(&self, writer: &mut Writer) -> Result<(), InsufficientBuffer> {
         if writer.remaining() < self.serialize_len() {
@@ -49,6 +76,9 @@ impl<'a> StatusLine<'a> {
     }
 }
 
+/// Parse status line.
+///
+/// See [`StatusLine`] for more details.
 pub fn parse_status_line<'a>(
     line: &'a [u8],
     output: &mut MaybeUninit<StatusLine<'a>>,
