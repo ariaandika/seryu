@@ -55,24 +55,3 @@ pub fn parse_line<'a, S: Search>(reader: &mut Reader<'a>) -> Result<&'a [u8], In
     let suffix = line.last_chunk::<2>().filter(|s| s[0] == b'\r').is_some() as usize;
     Ok(unsafe { line.get_unchecked(..line.len() - (suffix + 1)) })
 }
-
-#[test]
-fn test_line() {
-    let line = b"Host: example.com\r\n";
-    let mut reader = Reader::new(line);
-    let parsed = parse_line::<DefaultSearch>(&mut reader).unwrap();
-    assert!(!reader.has_remaining());
-    assert_eq!(parsed, b"Host: example.com");
-
-    let line = b"Host: example.com\n";
-    let mut reader = Reader::new(line);
-    let parsed = parse_line::<DefaultSearch>(&mut reader).unwrap();
-    assert!(!reader.has_remaining());
-    assert_eq!(parsed, b"Host: example.com");
-
-    let line = b"\n";
-    let mut reader = Reader::new(line);
-    let parsed = parse_line::<DefaultSearch>(&mut reader).unwrap();
-    assert!(!reader.has_remaining());
-    assert_eq!(parsed, b"");
-}

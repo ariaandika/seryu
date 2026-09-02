@@ -1,7 +1,105 @@
 use core::mem::MaybeUninit;
 
 use crate::bytes::{Reader, Writer};
-use crate::h1::{self, DefaultSearch, Headers, RequestLine};
+use crate::h1::target::Origin;
+use crate::h1::{self, DefaultSearch, Header, Headers, RequestLine, StatusLine};
+
+#[test]
+fn test_parse_line() {
+    let line = b"Host: example.com\r\n";
+    let mut reader = Reader::new(line);
+    let parsed = h1::parse_line::<DefaultSearch>(&mut reader).unwrap();
+    assert!(!reader.has_remaining());
+    assert_eq!(parsed, b"Host: example.com");
+
+    let line = b"Host: example.com\n";
+    let mut reader = Reader::new(line);
+    let parsed = h1::parse_line::<DefaultSearch>(&mut reader).unwrap();
+    assert!(!reader.has_remaining());
+    assert_eq!(parsed, b"Host: example.com");
+
+    let line = b"\n";
+    let mut reader = Reader::new(line);
+    let parsed = h1::parse_line::<DefaultSearch>(&mut reader).unwrap();
+    assert!(!reader.has_remaining());
+    assert_eq!(parsed, b"");
+}
+
+#[test]
+fn test_reqline() {
+    let mut buf = [const { MaybeUninit::uninit() }; 32];
+    macro_rules! test_me {
+        ($reqline:literal; $m:literal, $t:literal, $v:literal;) => {
+            let state = RequestLine::parse($reqline).unwrap();
+            assert_eq!(state.method, $m);
+            assert_eq!(state.target, $t);
+            assert_eq!(state.version, $v);
+            let mut writer = Writer::new(&mut buf);
+            state.serialize(&mut writer).unwrap();
+            let ser = writer.init();
+            assert_eq!(&ser[..ser.len() - 2], $reqline);
+        };
+    }
+    test_me! {
+        b"GET / HTTP/1.1";
+        b"GET", b"/", b"HTTP/1.1";
+    }
+    test_me! {
+        b"POST /users HTTP/1.1";
+        b"POST", b"/users", b"HTTP/1.1";
+    }
+    test_me! {
+        b"PUT ?id=4040 HTTP/1.1";
+        b"PUT", b"?id=4040", b"HTTP/1.1";
+    }
+    test_me! {
+        b"  HTTP/1.1";
+        b"", b"", b"HTTP/1.1";
+    }
+    test_me! {
+        b"PUT  HTTP/1.1";
+        b"PUT", b"", b"HTTP/1.1";
+    }
+}
+
+#[test]
+fn test_parse_origin() {
+    let target = b"/users?id=42";
+    let origin = Origin::parse(target).unwrap();
+    assert_eq!(origin.path, b"/users");
+    assert_eq!(origin.query, Some(&b"?id=42"[..]));
+}
+
+#[test]
+fn test_status_line() {
+    let state = StatusLine::parse(b"HTTP/1.1 200 OK").unwrap();
+
+    assert_eq!(state.version, b"HTTP/1.1");
+    assert_eq!(state.status, b"200");
+    assert_eq!(state.reason, b"OK");
+
+    let mut buf = [const { MaybeUninit::uninit() }; 32];
+    let mut writer = Writer::new(&mut buf);
+    state.serialize(&mut writer).unwrap();
+
+    assert_eq!(writer.init(), b"HTTP/1.1 200 OK\r\n");
+}
+
+#[test]
+fn test_parse_field() {
+    let header = Header::parse(b"Host: example.com").unwrap();
+    assert_eq!(header.name, b"Host");
+    assert_eq!(header.value, b"example.com");
+}
+
+#[test]
+fn test_serialize_header() {
+    let mut buf = [const { MaybeUninit::uninit() }; 32];
+    let mut writer = Writer::new(&mut buf);
+    let header = Header { name: b"Host", value: b"example.com" };
+    header.serialize(&mut writer).unwrap();
+    assert_eq!(writer.init(), b"Host: example.com\r\n");
+}
 
 #[test]
 fn test_parse_request() {

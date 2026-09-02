@@ -115,20 +115,3 @@ const fn shrink_array<const I: usize, const O: usize>(arr: &[u8; I]) -> &[u8; O]
     // SAFETY: `O < I`
     unsafe { &*arr.as_ptr().cast() }
 }
-
-// ===== tests =====
-
-#[test]
-fn test_status_line() {
-    let state = StatusLine::parse(b"HTTP/1.1 200 OK").unwrap();
-
-    assert_eq!(state.version, b"HTTP/1.1");
-    assert_eq!(state.status, b"200");
-    assert_eq!(state.reason, b"OK");
-
-    let mut buf = [const { MaybeUninit::uninit() }; 32];
-    let mut writer = Writer::new(&mut buf);
-    state.serialize(&mut writer).unwrap();
-
-    assert_eq!(writer.init(), b"HTTP/1.1 200 OK\r\n");
-}

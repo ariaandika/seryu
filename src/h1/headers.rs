@@ -135,21 +135,3 @@ pub enum HeaderError {
     /// Invalid header separator.
     InvalidSeparator,
 }
-
-// ===== tests =====
-
-#[test]
-fn test_parse_header() {
-    let header = Header::parse(b"Host: example.com").unwrap();
-    assert_eq!(header.name, b"Host");
-    assert_eq!(header.value, b"example.com");
-}
-
-#[test]
-fn test_serialize_header() {
-    let mut buf = [const { MaybeUninit::uninit() }; 32];
-    let mut writer = Writer::new(&mut buf);
-    let header = Header { name: b"Host", value: b"example.com" };
-    header.serialize(&mut writer).unwrap();
-    assert_eq!(writer.init(), b"Host: example.com\r\n");
-}
