@@ -1,35 +1,6 @@
 use crate::matches;
 use crate::uri::UriError;
 
-// ===== TargetKind =====
-
-/// Request target format.
-#[derive(Debug)]
-pub enum Form {
-    Origin,
-    Absolute,
-    Authority,
-    Asterisk,
-}
-
-impl Form {
-    /// Get target [`Form`] by request target's first byte.
-    ///
-    /// Note that this will not returns [`Authority`], caller must checks whether the method is
-    /// `CONNECT`. See [`authority-form`][1] for more details.
-    ///
-    /// [`Authority`]: Form::Authority
-    /// [1]: <https://www.rfc-editor.org/info/rfc9112/#name-authority-form>
-    #[inline]
-    pub const fn from_prefix(target: u8) -> Self {
-        match target {
-            b'/' | b'?' => Form::Origin,
-            b'*' => Form::Asterisk,
-            _ => Form::Absolute,
-        }
-    }
-}
-
 // ===== Origin =====
 
 /// Origin form request target.
