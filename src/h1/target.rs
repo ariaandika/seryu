@@ -50,6 +50,8 @@
 //! ```not_rust
 //! asterisk-form  = "*"
 //! ```
+use core::mem::MaybeUninit;
+
 use crate::matches;
 use crate::uri::UriError;
 
@@ -74,9 +76,10 @@ impl<'a> Origin<'a> {
     /// See the struct documentation for more details on the syntax.
     #[inline]
     pub const fn parse(target: &'a [u8]) -> Result<Self, UriError> {
-        let mut origin = Self { path: &[], query: None };
+        let mut origin = MaybeUninit::uninit();
         match parse_origin(target, &mut origin) {
-            Ok(()) => Ok(origin),
+            // SAFETY: `parse_origin` guarantee that `origin` is initialized
+            Ok(()) => Ok(unsafe { origin.assume_init() }),
             Err(err) => Err(err),
         }
     }
@@ -107,43 +110,49 @@ matches::ascii_lookup_table! {
 /// Parse request target as `origin-form`.
 ///
 /// See [`Origin`] for more details on the syntax.
-pub const fn parse_origin<'a>(target: &'a [u8], output: &mut Origin<'a>) -> Result<(), UriError> {
+pub const fn parse_origin<'a>(
+    target: &'a [u8],
+    output: &mut MaybeUninit<Origin<'a>>,
+) -> Result<(), UriError> {
     // origin-form      = absolute-path [ "?" query ]
     // absolute-path    = 1*( "/" segment )
     // segment          = *pchar
 
-    let Some((&prefix, mut bytes)) = target.split_first() else {
+    let Some((prefix, mut bytes)) = target.split_first() else {
         return Err(UriError::Empty);
     };
-
-    // "?key=value" are allowed, which is not prefixed with '/'
-    if prefix != b'/' {
-        loop {
-            let Some((&byte, rest)) = bytes.split_first() else {
-                output.path = target;
-                return Ok(());
-            };
-            if !is_pchar_or_slash(byte) {
-                break;
-            }
-            bytes = rest;
-        }
-    };
-
-    let Some((&delim, rest)) = bytes.split_first() else {
-        output.path = target;
-        return Ok(());
-    };
-    if delim != b'?' {
+    if *prefix != b'/' {
         return Err(UriError::InvalidPath);
     }
 
-    let query = bytes;
-    bytes = rest;
+    loop {
+        let Some((byte, rest)) = bytes.split_first() else {
+            output.write(Origin { path: target, query: None });
+            return Ok(());
+        };
+        if !is_pchar_or_slash(*byte) {
+            break;
+        }
+        bytes = rest;
+    }
+
+    let Some((delim, mut bytes)) = bytes.split_first() else {
+        output.write(Origin { path: target, query: None });
+        return Ok(());
+    };
+    if *delim != b'?' {
+        return Err(UriError::InvalidPath);
+    }
+
+    // SAFETY: `delim` is `Some` result of `bytes.split_first()`
+    let (path, query) = unsafe {
+        target.split_at_unchecked((delim as *const u8).offset_from_unsigned(target.as_ptr()))
+    };
+    let origin = Origin { path, query: Some(query) };
 
     loop {
         let [byte, rest @ ..] = bytes else {
-            output.query = Some(query);
+            output.write(origin);
             return Ok(());
         };
         if !is_query(*byte) {

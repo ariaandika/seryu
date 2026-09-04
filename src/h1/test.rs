@@ -64,10 +64,16 @@ fn test_reqline() {
 
 #[test]
 fn test_parse_origin() {
-    let target = b"/users?id=42";
-    let origin = Origin::parse(target).unwrap();
-    assert_eq!(origin.path, b"/users");
-    assert_eq!(origin.query, Some(&b"?id=42"[..]));
+    macro_rules! t {
+        ($t:literal, ($p:literal, $q:expr)) => {
+            let origin = Origin::parse($t).unwrap();
+            assert_eq!(origin.path, $p);
+            assert_eq!(origin.query, $q);
+        };
+    }
+    t!(b"/users", (b"/users", None));
+    t!(b"/users?", (b"/users", Some(&b"?"[..])));
+    t!(b"/users?id=42", (b"/users", Some(&b"?id=42"[..])));
 }
 
 #[test]
