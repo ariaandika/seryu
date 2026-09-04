@@ -1,27 +1,43 @@
 use core::slice::from_raw_parts;
 
-#[inline]
-pub const fn split_to_delim(bytes: &[u8], delim: u8) -> Option<(&[u8], &[u8])> {
-    let mut len = 0;
+const BLOCK: usize = size_of::<usize>();
+const MSB: usize = usize::from_ne_bytes([0b1000_0000; BLOCK]);
+const LSB: usize = usize::from_ne_bytes([0b0000_0001; BLOCK]);
 
-    loop {
-        if len >= bytes.len() {
-            return None;
+/// Returns line from the start until, excluding, the delimiter.
+pub const fn find<const B: u8>(mut bytes: &[u8]) -> Option<&[u8]> {
+    const { assert!(B < 128) };
+
+    let base = bytes.as_ptr();
+    let byte = const { usize::from_ne_bytes([B; BLOCK]) };
+
+    while let Some((chunk, rest)) = bytes.split_first_chunk::<BLOCK>() {
+        let block = usize::from_ne_bytes(*chunk);
+        let result = (block ^ byte).wrapping_sub(LSB) & MSB;
+        if result != 0 {
+            unsafe {
+                let nth = (result.trailing_zeros() / 8) as usize;
+                let end_ptr = bytes.as_ptr().add(nth);
+                let len = end_ptr.offset_from_unsigned(base);
+                return Some(from_raw_parts(base, len));
+            }
         }
-        if unsafe { *bytes.as_ptr().add(len) } == delim {
-            break;
-        }
-        len += 1;
+        bytes = rest;
     }
 
-    unsafe { Some(split_at_delim(bytes, len)) }
-}
-
-#[inline]
-pub const unsafe fn split_at_delim(bytes: &[u8], at: usize) -> (&[u8], &[u8]) {
-    let base = bytes.as_ptr();
-    let offset = at + 1;
-    unsafe { (from_raw_parts(base, at), from_raw_parts(base.add(offset), bytes.len() - offset)) }
+    loop {
+        let [byte, rest @ ..] = bytes else {
+            return None;
+        };
+        if *byte == B {
+            unsafe {
+                let end_ptr = bytes.as_ptr();
+                let len = end_ptr.offset_from_unsigned(base);
+                return Some(from_raw_parts(base, len));
+            }
+        }
+        bytes = rest;
+    }
 }
 
 macro_rules! write_field {

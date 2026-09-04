@@ -2,25 +2,25 @@ use core::mem::MaybeUninit;
 
 use crate::bytes::{Reader, Writer};
 use crate::h1::target::Origin;
-use crate::h1::{self, DefaultSearch, Header, Headers, RequestLine, StatusLine};
+use crate::h1::{self, Header, Headers, RequestLine, StatusLine};
 
 #[test]
 fn test_parse_line() {
     let line = b"Host: example.com\r\n";
     let mut reader = Reader::new(line);
-    let parsed = h1::parse_line::<DefaultSearch>(&mut reader).unwrap();
+    let parsed = h1::read_line(&mut reader).unwrap();
     assert!(!reader.has_remaining());
     assert_eq!(parsed, b"Host: example.com");
 
     let line = b"Host: example.com\n";
     let mut reader = Reader::new(line);
-    let parsed = h1::parse_line::<DefaultSearch>(&mut reader).unwrap();
+    let parsed = h1::read_line(&mut reader).unwrap();
     assert!(!reader.has_remaining());
     assert_eq!(parsed, b"Host: example.com");
 
     let line = b"\n";
     let mut reader = Reader::new(line);
-    let parsed = h1::parse_line::<DefaultSearch>(&mut reader).unwrap();
+    let parsed = h1::read_line(&mut reader).unwrap();
     assert!(!reader.has_remaining());
     assert_eq!(parsed, b"");
 }
@@ -106,7 +106,7 @@ fn test_parse_request() {
     let message = b"GET / HTTP/1.1\r\nHost:  example.com\r\nContent-Length:127\n\n";
     let mut reader = Reader::new(message);
 
-    let line = h1::parse_line::<DefaultSearch>(&mut reader).unwrap();
+    let line = h1::read_line(&mut reader).unwrap();
     let reqline = RequestLine::parse(line).unwrap();
 
     assert_eq!(reqline.method, b"GET");
@@ -117,11 +117,11 @@ fn test_parse_request() {
     let mut headers = Headers::new(&mut headers);
 
     loop {
-        let line = h1::parse_line::<DefaultSearch>(&mut reader).unwrap();
+        let line = h1::read_line(&mut reader).unwrap();
         if line.is_empty() {
             break;
         }
-        headers.parse_header::<DefaultSearch>(line).unwrap();
+        headers.parse_header(line).unwrap();
     }
 
     assert!(!reader.has_remaining());

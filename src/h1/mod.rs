@@ -35,7 +35,7 @@
 //! See [`RequestLine`] and [`StatusLine`] for more details on `request-line` and `status-line`.
 //!
 //! See [`Header`] for more details on `field-line`.
-pub use line::{Search, DefaultSearch, parse_line};
+pub use line::read_line;
 pub use request::{RequestLine, ReqlineError, parse_reqline};
 pub use response::{StatusLine, parse_status_line};
 pub use headers::{Header, Headers, HeaderError, parse_header};

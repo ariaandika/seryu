@@ -1,8 +1,7 @@
-use core::mem::{self, MaybeUninit};
+use core::mem::MaybeUninit;
 use core::{result, slice};
 
 use crate::bytes::{InsufficientBuffer, Writer};
-use crate::h1::line::{DefaultSearch, Search};
 use crate::h1::matches;
 
 // ===== Header =====
@@ -30,11 +29,13 @@ impl<'a> Header<'a> {
 
     /// Parse header from raw bytes.
     #[inline]
-    pub fn parse(bytes: &'a [u8]) -> Result<Self> {
+    pub const fn parse(bytes: &'a [u8]) -> Result<Self> {
         let mut me = MaybeUninit::uninit();
-        parse_header::<DefaultSearch>(bytes, &mut me)?;
-        // SAFETY: `parse_reqline` guarantee that its initialized
-        Ok(unsafe { me.assume_init() })
+        match parse_header(bytes, &mut me) {
+            // SAFETY: `parse_reqline` guarantee that `Header` initialized
+            Ok(()) => Ok(unsafe { me.assume_init() }),
+            Err(err) => Err(err),
+        }
     }
 
     /// Returns the required capacity to serialize header.
@@ -67,15 +68,17 @@ impl<'a> Header<'a> {
 
 /// Parse header from raw bytes.
 #[inline]
-pub const fn parse_header<'a, S: Search>(
+pub const fn parse_header<'a>(
     header: &'a [u8],
     output: &mut MaybeUninit<Header<'a>>,
 ) -> Result<()> {
-    let Some((name, val)) = matches::split_to_delim(header, b':') else {
+    let Some(name) = matches::find::<b':'>(header) else {
         return Err(HeaderError::InvalidSeparator);
     };
+    let off = name.len() + 1;
+    let value = unsafe { slice::from_raw_parts(header.as_ptr().add(off), header.len() - off) };
     matches::write_field!(output.name, name);
-    matches::write_field!(output.value, val.trim_ascii_start());
+    matches::write_field!(output.value, value.trim_ascii_start());
     Ok(())
 }
 
@@ -109,12 +112,16 @@ impl<'a, 'b> Headers<'a, 'b> {
     }
 
     #[inline]
-    pub fn parse_header<S: Search>(&mut self, bytes: &'b [u8]) -> Result<()> {
-        let Some((header, rest)) = mem::take(&mut self.buf).split_first_mut() else {
+    pub const fn parse_header(&mut self, bytes: &'b [u8]) -> Result<()> {
+        let Some(header_mut) = self.buf.first_mut() else {
             return Err(HeaderError::InsufficientHeaderBuf);
         };
-        parse_header::<S>(bytes, header)?;
-        self.buf = rest;
+        if let Err(err) = parse_header(bytes, header_mut) {
+            return Err(err);
+        }
+        unsafe {
+            self.buf = slice::from_raw_parts_mut(self.buf.as_mut_ptr().add(1), self.buf.len() - 1)
+        };
         self.len += 1;
         Ok(())
     }
