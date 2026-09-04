@@ -30,23 +30,25 @@
 //!
 //! # Usage
 //!
-//! Use [`parse_line`] to read a `CRLF` delimited line.
+//! Use [`read_line`] to read a `CRLF` delimited line.
 //!
 //! See [`RequestLine`] and [`StatusLine`] for more details on `request-line` and `status-line`.
 //!
-//! See [`Header`] for more details on `field-line`.
-pub use line::read_line;
-pub use request::{RequestLine, ReqlineError, parse_reqline};
-pub use response::{StatusLine, parse_status_line};
-pub use headers::{Header, Headers, HeaderError, parse_header};
-
+//! See [`Field`] for more details on `field-line`.
 mod matches;
 mod line;
 mod request;
 mod response;
-mod headers;
+mod field;
 
 pub mod target;
 
 #[cfg(test)]
 mod test;
+
+// ===== reexports =====
+
+pub use line::read_line;
+pub use request::{RequestLine, ReqlineError, parse_reqline};
+pub use response::{StatusLine, parse_status_line};
+pub use field::{Field, Fields, HeaderError, parse_field};
