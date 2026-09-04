@@ -40,6 +40,7 @@ mod line;
 mod request;
 mod response;
 mod field;
+mod error;
 
 pub mod target;
 
@@ -49,6 +50,7 @@ mod test;
 // ===== reexports =====
 
 pub use line::read_line;
-pub use request::{RequestLine, ReqlineError, parse_reqline};
+pub use request::{RequestLine, parse_reqline};
 pub use response::{StatusLine, parse_status_line};
-pub use field::{Field, Fields, HeaderError, parse_field};
+pub use field::{Field, Fields, parse_field};
+pub use error::{ParseError, Result};

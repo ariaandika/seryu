@@ -1,7 +1,7 @@
 use core::mem::MaybeUninit;
-use core::{error, fmt};
 
 use crate::bytes::{InsufficientBuffer, Writer};
+use crate::h1::ParseError;
 
 /// `HTTP/1.1` Message Request line.
 ///
@@ -21,8 +21,11 @@ use crate::bytes::{InsufficientBuffer, Writer};
 /// [`target`]: crate::h1::target
 #[derive(Debug, Default, Clone)]
 pub struct RequestLine<'a> {
+    /// Request method.
     pub method: &'a [u8],
+    /// Request target.
     pub target: &'a [u8],
+    /// Request version.
     pub version: &'a [u8],
 }
 
@@ -31,7 +34,7 @@ impl<'a> RequestLine<'a> {
     ///
     /// See the struct documentation for more details on the syntax.
     #[inline]
-    pub fn parse(reqline: &'a [u8]) -> Result<Self, ReqlineError> {
+    pub fn parse(reqline: &'a [u8]) -> Result<Self, ParseError> {
         let mut me = MaybeUninit::uninit();
         parse_reqline(reqline, &mut me)?;
         // SAFETY: `parse_reqline` guarantee that its initialized
@@ -70,11 +73,11 @@ impl<'a> RequestLine<'a> {
 pub fn parse_reqline<'a, 'b>(
     reqline: &'b [u8],
     output: &'a mut MaybeUninit<RequestLine<'b>>,
-) -> Result<&'a mut RequestLine<'b>, ReqlineError> {
+) -> Result<&'a mut RequestLine<'b>, ParseError> {
     const VERSION_SIZE: usize = b" HTTP/1.1".len();
 
     let Some(remaining) = reqline.len().checked_sub(VERSION_SIZE) else {
-        return Err(ReqlineError::Insufficient);
+        return Err(ParseError::InsufficientBytes);
     };
 
     // SAFETY: `remaining < reqline.len()`
@@ -86,7 +89,7 @@ pub fn parse_reqline<'a, 'b>(
     let mut method_len = 0;
     loop {
         let Some(byte) = rest.get(method_len) else {
-            return Err(ReqlineError::InvalidSeparator);
+            return Err(ParseError::InvalidSeparator);
         };
         if *byte == b' ' {
             break;
@@ -104,30 +107,5 @@ pub fn parse_reqline<'a, 'b>(
         (&raw mut (*out).target).write(rest.get_unchecked(1..));
 
         Ok(output.assume_init_mut())
-    }
-}
-
-// ===== errors =====
-
-#[derive(Debug)]
-pub enum ReqlineError {
-    Insufficient,
-    InvalidSeparator,
-}
-
-impl ReqlineError {
-    const fn message(&self) -> &'static str {
-        match self {
-            Self::Insufficient => "insufficient bytes",
-            Self::InvalidSeparator => "invalid separator",
-        }
-    }
-}
-
-impl error::Error for ReqlineError {}
-
-impl fmt::Display for ReqlineError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.message().fmt(f)
     }
 }

@@ -1,7 +1,7 @@
 use core::mem::MaybeUninit;
 
 use crate::bytes::{InsufficientBuffer, Writer};
-use crate::h1::{ReqlineError, matches};
+use crate::h1::{ParseError, matches};
 
 const VERSION_SIZE: usize = b"HTTP/1.1".len();
 const STATUS_SIZE: usize = 3;
@@ -33,8 +33,11 @@ const PREFIX_SIZE: usize = VERSION_SIZE + 2 + STATUS_SIZE;
 /// ```
 #[derive(Debug, Clone)]
 pub struct StatusLine<'a> {
+    /// Response version.
     pub version: &'a [u8; VERSION_SIZE],
+    /// Response status code.
     pub status: &'a [u8; STATUS_SIZE],
+    /// Response status reason phrase.
     pub reason: &'a [u8],
 }
 
@@ -43,7 +46,7 @@ impl<'a> StatusLine<'a> {
     ///
     /// See the struct documentation for more details on the syntax.
     #[inline]
-    pub fn parse(status_line: &'a [u8]) -> Result<Self, ReqlineError> {
+    pub fn parse(status_line: &'a [u8]) -> Result<Self, ParseError> {
         let mut me = MaybeUninit::uninit();
         parse_status_line(status_line, &mut me)?;
         // SAFETY: `parse_status_line` guarantee that its initialized
@@ -82,16 +85,16 @@ impl<'a> StatusLine<'a> {
 pub fn parse_status_line<'a>(
     line: &'a [u8],
     output: &mut MaybeUninit<StatusLine<'a>>,
-) -> Result<(), ReqlineError> {
+) -> Result<(), ParseError> {
     let Some((prefix, rest)) = line.split_first_chunk::<PREFIX_SIZE>() else {
-        return Err(ReqlineError::Insufficient);
+        return Err(ParseError::InsufficientBytes);
     };
 
     if prefix[VERSION_SIZE] != b' ' {
-        return Err(ReqlineError::InvalidSeparator);
+        return Err(ParseError::InvalidSeparator);
     }
     if prefix[VERSION_SIZE + 1 + STATUS_SIZE] != b' ' {
-        return Err(ReqlineError::InvalidSeparator);
+        return Err(ParseError::InvalidSeparator);
     }
 
     let (version, status) = split_array::<{ VERSION_SIZE + 1 }, { STATUS_SIZE + 1 }, _>(prefix);

@@ -1,7 +1,8 @@
 use core::mem::MaybeUninit;
-use core::{result, slice};
+use core::slice;
 
 use crate::bytes::{InsufficientBuffer, Writer};
+use crate::h1::error::{ParseError, Result};
 use crate::h1::matches;
 
 // ===== Field =====
@@ -16,9 +17,9 @@ use crate::h1::matches;
 /// ```
 #[derive(Debug)]
 pub struct Field<'a> {
-    // Field name.
+    /// Field name.
     pub name: &'a [u8],
-    // Field value.
+    /// Field value.
     pub value: &'a [u8],
 }
 
@@ -72,7 +73,7 @@ impl<'a> Field<'a> {
 #[inline]
 pub const fn parse_field<'a>(bytes: &'a [u8], output: &mut MaybeUninit<Field<'a>>) -> Result<()> {
     let Some(name) = matches::find::<b':'>(bytes) else {
-        return Err(HeaderError::InvalidSeparator);
+        return Err(ParseError::InvalidSeparator);
     };
     let off = name.len() + 1;
     let value = unsafe { slice::from_raw_parts(bytes.as_ptr().add(off), bytes.len() - off) };
@@ -109,17 +110,21 @@ impl<'a, 'b> Fields<'a, 'b> {
         self.buf.len()
     }
 
-    /// Returns `true` if buffer has remaining capacity.
+    /// Returns `true` if buffer has remaining capacity left.
     #[inline]
     pub const fn has_remaining(&self) -> bool {
         self.remaining() != 0
     }
 
     /// Parse field from raw bytes and store it in the buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if parsing failed or there is no remaining buffer capacity left.
     #[inline]
     pub const fn parse_field(&mut self, bytes: &'b [u8]) -> Result<()> {
         let Some(field_mut) = self.buf.first_mut() else {
-            return Err(HeaderError::InsufficientHeaderBuf);
+            return Err(ParseError::InsufficientBuf);
         };
         if let Err(err) = parse_field(bytes, field_mut) {
             return Err(err);
@@ -130,20 +135,4 @@ impl<'a, 'b> Fields<'a, 'b> {
         self.len += 1;
         Ok(())
     }
-}
-
-// ===== errors =====
-
-/// `Result` alias for header parsing result.
-pub type Result<T, E = HeaderError> = result::Result<T, E>;
-
-/// An error that may occur when parsing headers.
-#[derive(Debug)]
-pub enum HeaderError {
-    /// Given bytes does not contains the end of headers delimiter.
-    MissingEndOfHeaders,
-    /// Provided header buffer is insufficient.
-    InsufficientHeaderBuf,
-    /// Invalid header separator.
-    InvalidSeparator,
 }

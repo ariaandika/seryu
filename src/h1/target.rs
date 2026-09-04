@@ -66,7 +66,9 @@ use crate::uri::UriError;
 /// ```
 #[derive(Debug, Default)]
 pub struct Origin<'a> {
+    /// Target path.
     pub path: &'a [u8],
+    /// Target query.
     pub query: Option<&'a [u8]>,
 }
 
