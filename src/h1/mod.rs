@@ -35,6 +35,12 @@
 //! See [`RequestLine`] and [`StatusLine`] for more details on `request-line` and `status-line`.
 //!
 //! See [`Field`] for more details on `field-line`.
+pub use line::read_line;
+pub use request::{RequestLine, parse_reqline};
+pub use response::{StatusLine, parse_status_line};
+pub use field::{Field, Fields, parse_field};
+pub use error::{ParseError, Result};
+
 mod matches;
 mod line;
 mod request;
@@ -46,11 +52,3 @@ pub mod target;
 
 #[cfg(test)]
 mod test;
-
-// ===== reexports =====
-
-pub use line::read_line;
-pub use request::{RequestLine, parse_reqline};
-pub use response::{StatusLine, parse_status_line};
-pub use field::{Field, Fields, parse_field};
-pub use error::{ParseError, Result};

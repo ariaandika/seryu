@@ -73,7 +73,7 @@ impl<'a> Field<'a> {
 #[inline]
 pub const fn parse_field<'a>(bytes: &'a [u8], output: &mut MaybeUninit<Field<'a>>) -> Result<()> {
     let Some(name) = matches::find::<b':'>(bytes) else {
-        return Err(ParseError::InvalidSeparator);
+        return Err(ParseError::InsufficientBytes);
     };
     let off = name.len() + 1;
     let value = unsafe { slice::from_raw_parts(bytes.as_ptr().add(off), bytes.len() - off) };

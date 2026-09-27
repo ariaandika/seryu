@@ -10,8 +10,8 @@ pub enum ParseError {
     InsufficientBytes,
     /// Buffer has no remaining capacity left.
     InsufficientBuf,
-    /// Invalid or missing separator.
-    InvalidSeparator,
+    /// Invalid expected byte.
+    InvalidByte,
 }
 
 impl ParseError {
@@ -19,7 +19,7 @@ impl ParseError {
         match self {
             Self::InsufficientBytes => "insufficient bytes",
             Self::InsufficientBuf => "insufficient buffer",
-            Self::InvalidSeparator => "invalid separator",
+            Self::InvalidByte => "invalid expected byte",
         }
     }
 }

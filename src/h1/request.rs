@@ -89,7 +89,7 @@ pub fn parse_reqline<'a, 'b>(
     let mut method_len = 0;
     loop {
         let Some(byte) = rest.get(method_len) else {
-            return Err(ParseError::InvalidSeparator);
+            return Err(ParseError::InsufficientBytes);
         };
         if *byte == b' ' {
             break;

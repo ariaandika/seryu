@@ -25,6 +25,5 @@
 mod matches;
 
 pub mod bytes;
-pub mod uri;
 pub mod http;
 pub mod h1;

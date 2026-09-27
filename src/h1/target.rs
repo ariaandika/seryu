@@ -52,8 +52,8 @@
 //! ```
 use core::mem::MaybeUninit;
 
+use crate::h1::ParseError;
 use crate::matches;
-use crate::uri::UriError;
 
 // ===== Origin =====
 
@@ -77,7 +77,7 @@ impl<'a> Origin<'a> {
     ///
     /// See the struct documentation for more details on the syntax.
     #[inline]
-    pub const fn parse(target: &'a [u8]) -> Result<Self, UriError> {
+    pub const fn parse(target: &'a [u8]) -> Result<Self, ParseError> {
         let mut origin = MaybeUninit::uninit();
         match parse_origin(target, &mut origin) {
             // SAFETY: `parse_origin` guarantee that `origin` is initialized
@@ -115,16 +115,16 @@ matches::ascii_lookup_table! {
 pub const fn parse_origin<'a>(
     target: &'a [u8],
     output: &mut MaybeUninit<Origin<'a>>,
-) -> Result<(), UriError> {
+) -> Result<(), ParseError> {
     // origin-form      = absolute-path [ "?" query ]
     // absolute-path    = 1*( "/" segment )
     // segment          = *pchar
 
     let Some((prefix, mut bytes)) = target.split_first() else {
-        return Err(UriError::Empty);
+        return Err(ParseError::InsufficientBytes);
     };
     if *prefix != b'/' {
-        return Err(UriError::InvalidPath);
+        return Err(ParseError::InvalidByte);
     }
 
     loop {
@@ -143,7 +143,7 @@ pub const fn parse_origin<'a>(
         return Ok(());
     };
     if *delim != b'?' {
-        return Err(UriError::InvalidPath);
+        return Err(ParseError::InvalidByte);
     }
 
     // SAFETY: `delim` is `Some` result of `bytes.split_first()`
@@ -158,7 +158,7 @@ pub const fn parse_origin<'a>(
             return Ok(());
         };
         if !is_query(*byte) {
-            return Err(UriError::InvalidPath);
+            return Err(ParseError::InvalidByte);
         }
         bytes = rest;
     }

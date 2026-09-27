@@ -91,10 +91,10 @@ pub fn parse_status_line<'a>(
     };
 
     if prefix[VERSION_SIZE] != b' ' {
-        return Err(ParseError::InvalidSeparator);
+        return Err(ParseError::InvalidByte);
     }
     if prefix[VERSION_SIZE + 1 + STATUS_SIZE] != b' ' {
-        return Err(ParseError::InvalidSeparator);
+        return Err(ParseError::InvalidByte);
     }
 
     let (version, status) = split_array::<{ VERSION_SIZE + 1 }, { STATUS_SIZE + 1 }, _>(prefix);
