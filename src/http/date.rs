@@ -1,167 +1,223 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use core::mem::MaybeUninit;
 
-/// Create [httpdate][rfc] for current time.
+// ===== Gregorian leap years =====
+
+// leap year have 366 days, instead of 365 in common year
+// rules of leap year:
+// - divisible by 4           = leap
+// - except divisible by 100  = not leap
+// - except divisible by 400  = leap again
+
+// the following is total days in X years, with leap years each have 1 extra day
+
+// there are 97 leap years in 400Y
+const DAYS_PER_400Y: i64 = DAYS_PER_YEAR * 400 + 97;
+// there are 24 leap years in 100Y
+const DAYS_PER_100Y: i64 = DAYS_PER_YEAR * 100 + 24;
+// there are 1 leap years in 4Y
+const DAYS_PER_4Y: i64 = DAYS_PER_YEAR * 4 + 1;
+
+const DAYS_PER_YEAR: i64 = 365;
+
+// ===== Starting date =====
+
+// instead of Epoch, date starts at:
+// `Wed, 01 Mar 2000 00:00:00 GMT`
+
+// offset from Epoch to starting date in `day` unit
+const DAYS_EPOCH_OFF: i64 = 11017;
+
+// [Mar, .., Feb]
+const DAYS_EACH_MONTHS: [i64; 12] = [31, 30, 31, 30, 31, 31, 30, 31, 30, 31, 31, 29];
+
+// ===== httpdate =====
+
+/// Write [`httpdate`][1] with given seconds since the Epoch, `1970-01-01 00:00:00 +0000 (UTC)`.
 ///
-/// [rfc]: <https://datatracker.ietf.org/doc/html/rfc9110#name-date-time-formats>
-#[inline]
-pub fn httpdate_now() -> [u8; 29] {
-    httpdate(SystemTime::now())
-}
-
-/// Create [httpdate][rfc] with given time.
+/// Returns `None` if `secs` is negative or resolved date has year more than `9999`.
 ///
-/// [rfc]: <https://datatracker.ietf.org/doc/html/rfc9110#name-date-time-formats>
-pub fn httpdate(v: SystemTime) -> [u8; 29] {
-    let dur = v.duration_since(UNIX_EPOCH).unwrap();
-
-    let secs_since_epoch = dur.as_secs();
-    if secs_since_epoch >= 253402300800 {
-        // year 9999
-        panic!("date must be before year 9999");
+/// [1]: <https://www.rfc-editor.org/info/rfc9110/#name-date-time-formats>
+pub fn write_date(secs: i64, buf: &mut [MaybeUninit<u8>; 29]) -> Option<&mut [u8; 29]> {
+    if secs.is_negative() {
+        return None;
     }
 
-    /* 2000-03-01 (mod 400 year, immediately after feb29 */
+    // total days since epoch
+    let total_days_epoch = secs / 86400;
 
-    const LEAPOCH: i64 = 11017;
-    const DAYS_PER_400Y: i64 = 365 * 400 + 97;
-    const DAYS_PER_100Y: i64 = 365 * 100 + 24;
-    const DAYS_PER_4Y: i64 = 365 * 4 + 1;
+    // total days since starting date, maybe negative
+    let total_days = total_days_epoch - DAYS_EPOCH_OFF;
 
-    let days = (secs_since_epoch / 86400) as i64 - LEAPOCH;
-    let secs_of_day = secs_since_epoch % 86400;
+    let mut remdays;
 
-    let mut qc_cycles = days / DAYS_PER_400Y;
-    let mut remdays = days % DAYS_PER_400Y;
+    let year;
+    let month;
 
-    if remdays < 0 {
-        remdays += DAYS_PER_400Y;
+    // ===== gregorian calendar cycles =====
+    {
+        // is given time less than starting date
+        let is_pre_start = total_days.is_negative() as i64;
 
-        qc_cycles -= 1;
-    }
+        // number of 400Y cycles has happened
+        let y400_cycles = (total_days / DAYS_PER_400Y) - is_pre_start;
+        remdays = (total_days % DAYS_PER_400Y) + (is_pre_start * DAYS_PER_400Y);
 
-    let mut c_cycles = remdays / DAYS_PER_100Y;
-    if c_cycles == 4 {
-        c_cycles -= 1;
-    }
-    remdays -= c_cycles * DAYS_PER_100Y;
+        // number of 100Y cycles has happened
+        let y100_cycles = {
+            let cy = remdays / DAYS_PER_100Y;
+            cy - (cy == 4) as i64
+        };
+        remdays -= y100_cycles * DAYS_PER_100Y;
 
-    let mut q_cycles = remdays / DAYS_PER_4Y;
-    if q_cycles == 25 {
-        q_cycles -= 1;
-    }
-    remdays -= q_cycles * DAYS_PER_4Y;
+        // number of 4Y cycles has happened
+        let y4_cycles = {
+            let cy = remdays / DAYS_PER_4Y;
+            cy - (cy == 25) as i64
+        };
+        remdays -= y4_cycles * DAYS_PER_4Y;
 
-    let mut remyears = remdays / 365;
-    if remyears == 4 {
-        remyears -= 1;
-    }
-    remdays -= remyears * 365;
+        // number of 1Y cycles has happened
+        let y1_cycles = {
+            let cy = remdays / 365;
+            cy - (cy == 4) as i64
+        };
+        remdays -= y1_cycles * DAYS_PER_YEAR;
 
-    let mut year = 2000 + remyears + 4 * q_cycles + 100 * c_cycles + 400 * qc_cycles;
+        // ===== remdays calculated =====
 
-    let months = [31, 30, 31, 30, 31, 31, 30, 31, 30, 31, 31, 29];
-    let mut mon = 0;
-    for mon_len in months.iter() {
-        mon += 1;
-        if remdays < *mon_len {
-            break;
+        let mut mon = 0u8;
+        for mon_len in DAYS_EACH_MONTHS {
+            if remdays < mon_len {
+                break;
+            }
+            remdays -= mon_len;
+            mon += 1;
         }
-        remdays -= *mon_len;
+        month = mon;
+
+        // the starting date month is `Mar`, so `10` and `11` is `Jan` and `Feb` next year
+        let year_off = (mon >= 10) as i64;
+
+        year = 2000 + year_off + y1_cycles + 4 * y4_cycles + 100 * y100_cycles + 400 * y400_cycles;
     }
-    let mday = remdays + 1;
-    let mon = if mon + 2 > 12 {
-        year += 1;
-        mon - 10
-    } else {
-        mon + 2
-    };
 
-    // ===== Write =====
-    // https://www.rfc-editor.org/rfc/rfc9110#section-5.6.7
-
-    let mut buf: [u8; 29] = *b"ddd, 00 mmm 1970 00:00:00 GMT";
+    if year > 9999 {
+        return None;
+    }
 
     // ===== day-name =====
 
-    let mut wday = (3 + days) % 7;
-    if wday <= 0 {
-        wday += 7
-    };
-    buf[..3].copy_from_slice(match wday {
-        1 => b"Mon",
-        2 => b"Tue",
-        3 => b"Wed",
-        4 => b"Thu",
-        5 => b"Fri",
-        6 => b"Sat",
-        7 => b"Sun",
+    // make `total_days` positive while maintaining week day
+    let week_day = total_days % 7 + 7;
+
+    // starting date week day is `Wed`
+    buf[..4].write_copy_of_slice(match week_day % 7 {
+        0 => b"Wed,",
+        1 => b"Thu,",
+        2 => b"Fri,",
+        3 => b"Sat,",
+        4 => b"Sun,",
+        5 => b"Mon,",
+        6 => b"Tue,",
         _ => unreachable!(),
     });
 
     // ===== day =====
 
-    let day = mday as u8;
-    buf[5] = b'0' + (day / 10);
-    buf[6] = b'0' + (day % 10);
+    // remdays is `0` based, while date is `1` based
+    let day = (remdays + 1) as u8;
+    buf[4].write(b' ');
+    buf[5].write(b'0' + (day / 10));
+    buf[6].write(b'0' + (day % 10));
+    buf[7].write(b' ');
 
     // ===== month =====
 
-    buf[8..11].copy_from_slice(match mon {
-        1 => b"Jan",
-        2 => b"Feb",
-        3 => b"Mar",
-        4 => b"Apr",
-        5 => b"May",
-        6 => b"Jun",
-        7 => b"Jul",
-        8 => b"Aug",
-        9 => b"Sep",
-        10 => b"Oct",
-        11 => b"Nov",
-        12 => b"Dec",
+    // starting date month is `Mar`
+    buf[8..12].write_copy_of_slice(match month {
+        0 => b"Mar ",
+        1 => b"Apr ",
+        2 => b"May ",
+        3 => b"Jun ",
+        4 => b"Jul ",
+        5 => b"Aug ",
+        6 => b"Sep ",
+        7 => b"Oct ",
+        8 => b"Nov ",
+        9 => b"Dec ",
+        10 => b"Jan ",
+        11 => b"Feb ",
         _ => unreachable!(),
     });
 
     // ===== year =====
 
-    buf[12] = b'0' + (year / 1000) as u8;
-    buf[13] = b'0' + (year / 100 % 10) as u8;
-    buf[14] = b'0' + (year / 10 % 10) as u8;
-    buf[15] = b'0' + (year % 10) as u8;
+    buf[12].write(b'0' + (year / 1000) as u8);
+    buf[13].write(b'0' + (year / 100 % 10) as u8);
+    buf[14].write(b'0' + (year / 10 % 10) as u8);
+    buf[15].write(b'0' + (year % 10) as u8);
+    buf[16].write(b' ');
 
-    // ===== hour =====
+    // ===== time-of-day =====
 
+    let secs_of_day = secs % 86400;
     let hour = (secs_of_day / 3600) as u8;
-    buf[17] = b'0' + (hour / 10);
-    buf[18] = b'0' + (hour % 10);
-
-    // ===== minute =====
-
     let min = ((secs_of_day % 3600) / 60) as u8;
-    buf[20] = b'0' + (min / 10);
-    buf[21] = b'0' + (min % 10);
-
-    // ===== second =====
-
     let sec = (secs_of_day % 60) as u8;
-    buf[23] = b'0' + (sec / 10);
-    buf[24] = b'0' + (sec % 10);
 
+    buf[17].write(b'0' + (hour / 10));
+    buf[18].write(b'0' + (hour % 10));
+    buf[19].write(b':');
+    buf[20].write(b'0' + (min / 10));
+    buf[21].write(b'0' + (min % 10));
+    buf[22].write(b':');
+    buf[23].write(b'0' + (sec / 10));
+    buf[24].write(b'0' + (sec % 10));
+    buf[25..29].write_copy_of_slice(b" GMT");
 
-    buf
+    // `MaybeUninit` unaware of array
+    unsafe { Some(&mut *(buf as *mut [_; 29] as *mut [_; 29])) }
 }
+
+// ===== tests =====
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, UNIX_EPOCH};
-    use super::httpdate;
+    use core::mem::MaybeUninit;
+
+    use super::write_date;
+
+    macro_rules! test_me {
+        ($sec:expr, $exp:literal) => {
+            let mut b = [MaybeUninit::uninit(); _];
+            let date = write_date($sec, &mut b).unwrap();
+            assert_eq!(date, $exp);
+        };
+    }
 
     #[test]
     fn test_httpdate() {
-        let d = UNIX_EPOCH;
-        assert_eq!(str::from_utf8(&httpdate(d)), Ok("Thu, 01 Jan 1970 00:00:00 GMT"));
-        let d = UNIX_EPOCH + Duration::from_secs(1475419451);
-        assert_eq!(str::from_utf8(&httpdate(d)), Ok("Sun, 02 Oct 2016 14:44:11 GMT"));
+        test_me!(0, b"Thu, 01 Jan 1970 00:00:00 GMT");
+        test_me!(784111777, b"Sun, 06 Nov 1994 08:49:37 GMT");
+        test_me!(946684800, b"Sat, 01 Jan 2000 00:00:00 GMT");
+        test_me!(951782400, b"Tue, 29 Feb 2000 00:00:00 GMT");
+
+        test_me!(951782399, b"Mon, 28 Feb 2000 23:59:59 GMT");
+        test_me!(951782400, b"Tue, 29 Feb 2000 00:00:00 GMT");
+        test_me!(951868799, b"Tue, 29 Feb 2000 23:59:59 GMT");
+        test_me!(951868800, b"Wed, 01 Mar 2000 00:00:00 GMT");
+
+        test_me!(1475419451, b"Sun, 02 Oct 2016 14:44:11 GMT");
+        test_me!(1577836800, b"Wed, 01 Jan 2020 00:00:00 GMT");
+        test_me!(1582934400, b"Sat, 29 Feb 2020 00:00:00 GMT");
+        test_me!(1609459200, b"Fri, 01 Jan 2021 00:00:00 GMT");
+        test_me!(1767225600, b"Thu, 01 Jan 2026 00:00:00 GMT");
+        test_me!(1790510400, b"Sun, 27 Sep 2026 12:00:00 GMT");
+
+        test_me!(4107542399, b"Sun, 28 Feb 2100 23:59:59 GMT");
+        test_me!(4107542400, b"Mon, 01 Mar 2100 00:00:00 GMT");
+
+        test_me!(13574534399, b"Mon, 28 Feb 2400 15:59:59 GMT");
+        test_me!(13574534400, b"Mon, 28 Feb 2400 16:00:00 GMT");
     }
 }
-
