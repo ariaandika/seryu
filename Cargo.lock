@@ -3,5 +3,13 @@
 version = 4
 
 [[package]]
+name = "genos"
+version = "0.1.0"
+source = "git+https://github.com/ariaandika/genos.git?rev=ef679ec#ef679ec83db88d393678636fff2d7f6a4b2c6285"
+
+[[package]]
 name = "seryu"
 version = "0.1.0"
+dependencies = [
+ "genos",
+]

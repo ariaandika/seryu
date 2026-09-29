@@ -2,3 +2,6 @@
 name = "seryu"
 version = "0.1.0"
 edition = "2024"
+
+[dependencies]
+genos = { git = "https://github.com/ariaandika/genos.git", rev = "ef679ec", version = "0.1.0" }
