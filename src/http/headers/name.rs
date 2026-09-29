@@ -1,7 +1,7 @@
-use tcio::bytes::Bytes;
+use core::{fmt, hash};
 
-use crate::http::headers::matches;
 use crate::http::headers::error::HeaderError;
+use crate::http::headers::matches;
 
 /// HTTP Header name.
 ///
@@ -13,7 +13,6 @@ use crate::http::headers::error::HeaderError;
 /// Normalization requires copying the bytes. If the input is known to not contains uppercase
 /// character, use [`from_bytes_lowercase`][HeaderName::from_bytes_lowercase] that does not incur
 /// copy but returns error instead.
-//
 // HeaderName is optimized towards predefined standard headers
 //
 // Optimized operations is:
@@ -22,17 +21,8 @@ use crate::http::headers::error::HeaderError;
 //
 // predefined headers skip validation and returns precomputed hash
 // while arbitrary headers must pass validation and compute hash on demand
-#[derive(Clone)]
-pub struct HeaderName {
-    repr: Repr,
-}
-
-#[derive(Clone)]
-enum Repr {
-    Static(&'static Static),
-    /// is valid ASCII
-    Arbitrary(Bytes),
-}
+#[repr(transparent)]
+pub struct HeaderName([u8]);
 
 struct Static {
     string: &'static str,
@@ -40,57 +30,6 @@ struct Static {
 }
 
 impl HeaderName {
-    /// Parse header name from static bytes.
-    ///
-    /// The input must not contains ASCII uppercase characters.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the input is not a valid header name or contains ASCII uppercase characters.
-    #[inline]
-    pub const fn from_static(bytes: &'static [u8]) -> Self {
-        match validate_header_name_lowercase(bytes) {
-            Ok(()) => Self {
-                repr: Repr::Arbitrary(Bytes::from_static(bytes)),
-            },
-            Err(err) => err.panic_const(),
-        }
-    }
-
-    /// Parse header name from [`Bytes`].
-    ///
-    /// The input must not contains ASCII uppercase characters.
-    ///
-    /// For more flexible API use [`HeaderName::from_slice`].
-    ///
-    /// # Errors
-    ///
-    /// Returns error if the input is not a valid header name or contains ASCII uppercase
-    /// characters.
-    #[inline]
-    pub fn from_bytes_lowercase<B: Into<Bytes>>(name: B) -> Result<Self, HeaderError> {
-        let name = name.into();
-        match validate_header_name_lowercase(name.as_slice()) {
-            Ok(()) => Ok(Self {
-                repr: Repr::Arbitrary(name),
-            }),
-            Err(err) => Err(err),
-        }
-    }
-
-    /// Create [`HeaderName`] from bytes without validation.
-    ///
-    /// # Safety
-    ///
-    /// `name` must be valid ASCII.
-    #[inline]
-    pub unsafe fn from_bytes_unchecked(name: Bytes) -> Self {
-        debug_assert!(Self::from_slice(&name).is_ok());
-        Self {
-            repr: Repr::Arbitrary(name),
-        }
-    }
-
     /// Parse header name by copying from slice of bytes.
     ///
     /// Input name is normalized to lowercase.
@@ -99,24 +38,29 @@ impl HeaderName {
     ///
     /// Returns error if the input is not a valid header name.
     #[inline]
-    pub fn from_slice<A: AsRef<[u8]>>(name: A) -> Result<Self, HeaderError> {
-        let bytes = name.as_ref();
-        if matches!(bytes.len(), 1..=MAX_HEADER_NAME_LEN) {
-            copy_to_header_name(bytes)
-        } else {
-            Err(HeaderError::invalid_len(bytes.len()))
+    pub const fn from_bytes(name: &[u8]) -> Result<&Self, HeaderError> {
+        match validate_header_name(name) {
+            Ok(()) => Ok(Self::from_raw(name)),
+            Err(err) => Err(err),
         }
     }
 
-    /// Extracts a string slice of the header name.
+    const fn from_raw(name: &[u8]) -> &Self {
+        unsafe { &*(name as *const _ as *const _) }
+    }
+
+    /// Returns the bytes representation.
+    #[inline]
+    pub const fn as_bytes(&self) -> &[u8] {
+        unsafe { &*(self as *const _ as *const _) }
+    }
+
+    /// Returns the string representation.
     ///
-    /// The returned string will always in ASCII lowercase.
+    /// The returned string will always be in ASCII lowercase.
     #[inline]
     pub const fn as_str(&self) -> &str {
-        match &self.repr {
-            Repr::Static(s) => s.string,
-            Repr::Arbitrary(bytes) => unsafe { str::from_utf8_unchecked(bytes.as_slice()) },
-        }
+        unsafe { str::from_utf8_unchecked(self.as_bytes()) }
     }
 
     /// Checks that two header name are an ASCII case-insensitive match.
@@ -128,20 +72,21 @@ impl HeaderName {
     }
 
     pub(crate) const fn hash(&self) -> u32 {
-        match &self.repr {
-            Repr::Static(s) => s.hash,
-            Repr::Arbitrary(bytes) => matches::hash_32(bytes.as_slice()),
-        }
+        todo!()
+        // match &self.repr {
+        //     Repr::Static(s) => s.hash,
+        //     Repr::Arbitrary(bytes) => matches::hash_32(bytes.as_slice()),
+        // }
     }
 }
 
 // ===== Parser =====
 
-const MAX_HEADER_NAME_LEN: usize = 1024;  // 1KB
+const MAX_HEADER_NAME_LEN: usize = 1024; // 1KB
 
 /// token       = 1*tchar
 /// field-name  = token
-const fn validate_header_name_lowercase(mut bytes: &[u8]) -> Result<(), HeaderError> {
+const fn validate_header_name(mut bytes: &[u8]) -> Result<(), HeaderError> {
     use HeaderError as E;
 
     if !matches!(bytes.len(), 1..=MAX_HEADER_NAME_LEN) {
@@ -149,59 +94,39 @@ const fn validate_header_name_lowercase(mut bytes: &[u8]) -> Result<(), HeaderEr
     }
 
     while let [byte, rest @ ..] = bytes {
-        if matches::is_token_lowercase(*byte) {
+        if matches::is_token(*byte) {
             bytes = rest;
         } else {
-            return Err(E::Invalid)
+            return Err(E::Invalid);
         }
     }
 
     Ok(())
 }
 
-fn copy_to_header_name(bytes: &[u8]) -> Result<HeaderName, HeaderError> {
-    use HeaderError as E;
-
-    let mut name = vec![0; bytes.len()];
-
-    for (output, input) in name.iter_mut().zip(bytes) {
-        *output = matches::HEADER_NAME[*input as usize];
-
-        // Any invalid character will have it MSB set
-        if *output & 128 == 128 {
-            return Err(E::Invalid);
-        }
-    }
-
-    Ok(HeaderName {
-        repr: Repr::Arbitrary(name.into()),
-    })
-}
-
 // ===== Traits =====
 
-impl std::fmt::Display for HeaderName {
-    #[inline]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        str::fmt(self.as_str(), f)
+impl fmt::Display for HeaderName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.as_str().fmt(f)
     }
 }
 
-impl std::fmt::Debug for HeaderName {
-    #[inline]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("HeaderName").field(&self.as_str()).finish()
+impl fmt::Debug for HeaderName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.as_str().fmt(f)
     }
 }
 
-impl std::hash::Hash for HeaderName {
+impl hash::Hash for HeaderName {
     #[inline]
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
         state.write_u32(self.hash());
     }
 }
 
 impl PartialEq for HeaderName {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
         // HeaderName is guaranteed to have ascii lowercase value,
         // therefore it is correct for case-insensitive eq
@@ -209,7 +134,7 @@ impl PartialEq for HeaderName {
     }
 }
 
-impl Eq for HeaderName { }
+impl Eq for HeaderName {}
 
 // ===== Standard Headers =====
 
@@ -633,7 +558,6 @@ macro_rules! standard_header {
     (@HPACK_IDX) => {None};
 
     // ===== CORE =====
-
     (@CORE
         $(
             $(#[$doc:meta])*
@@ -642,16 +566,17 @@ macro_rules! standard_header {
     ) => {
         $(
             $(#[$doc])*
-            $vis const $id: $t = {
-                static $id: Static = Static {
-                    string: $name,
-                    hash: matches::hash_32($name.as_bytes()),
-                };
-
-                HeaderName {
-                    repr: Repr::Static(&$id)
-                }
-            };
+            $vis const $id: &$t = HeaderName::from_raw($name.as_bytes());
+            // $vis const $id: &$t = {
+            //     static $id: Static = Static {
+            //         string: $name,
+            //         hash: matches::hash_32($name.as_bytes()),
+            //     };
+            //
+            //     HeaderName {
+            //         repr: Repr::Static(&$id)
+            //     }
+            // };
         )*
     };
 
@@ -690,13 +615,11 @@ mod request {
         hash.wrapping_mul(MUL) >> SHIFT
     }
 
-    pub fn header(hash: u32, name: &[u8]) -> Option<HeaderName> {
+    pub fn header(hash: u32, name: &[u8]) -> Option<&HeaderName> {
         let hash = calc_index(hash);
         let s = unsafe { LOOKUP.get_unchecked((hash & MASK) as usize) };
         if s.string.as_bytes() == name {
-            Some(HeaderName {
-                repr: Repr::Static(s)
-            })
+            Some(HeaderName::from_raw(s.string.as_bytes()))
         } else {
             None
         }
@@ -764,12 +687,7 @@ mod request {
             &UPGRADE_INSECURE_REQUESTS,
             &USER_AGENT,
         ];
-        let mut lookup = [const {
-            &Static {
-                string: "_",
-                hash: 0,
-            }
-        }; CAP as usize];
+        let mut lookup = [const { &Static { string: "_", hash: 0 } }; CAP as usize];
         let mut i = 0;
         while i < headers.len() {
             let s = headers[i];

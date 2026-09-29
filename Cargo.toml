@@ -2,6 +2,3 @@
 name = "seryu"
 version = "0.1.0"
 edition = "2024"
-
-[dependencies]
-tcio = { git = "https://github.com/ariaandika/tcio" }

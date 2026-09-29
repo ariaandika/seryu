@@ -1,4 +1,5 @@
 //! Error types that can occur during header related operation.
+use core::{error, fmt};
 
 /// An error that can occur in header related operations.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -26,32 +27,12 @@ impl HeaderError {
             Self::Invalid => "invalid byte",
         }
     }
-
-    pub(crate) const fn panic_const(self) -> ! {
-        panic!("{}",self.message())
-    }
 }
 
-impl std::error::Error for HeaderError {}
-impl std::fmt::Display for HeaderError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl error::Error for HeaderError {}
+
+impl fmt::Display for HeaderError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.message())
-    }
-}
-
-// ===== Reserve Error =====
-
-/// An error that can occur when performing allocation in [`HeaderMap`].
-///
-/// [`HeaderMap`]: crate::headers::HeaderMap
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct TryReserveError { }
-
-impl std::error::Error for TryReserveError {}
-
-impl std::fmt::Display for TryReserveError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("header map capacity exceeded")
     }
 }
