@@ -4,4 +4,17 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-genos = { git = "https://github.com/ariaandika/genos.git", rev = "ef679ec", version = "0.1.0" }
+genos.workspace = true
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+
+[workspace]
+resolver = "3"
+members = ["example"]
+
+[workspace.dependencies]
+genos = { git = "https://github.com/ariaandika/genos.git", rev = "bb2d92f", version = "0.1.0" }
