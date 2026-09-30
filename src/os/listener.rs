@@ -1,8 +1,5 @@
 use genos::fd::{AsFd, BorrowedFd};
-use genos::net::Socket;
-use genos::net::addr::Family;
-use genos::net::ip::SockAddrIn;
-use genos::net::option::{OptName, OptValue};
+use genos::net::{SockAddrIn, Socket, opt};
 
 use crate::error::IoError;
 
@@ -12,6 +9,7 @@ pub struct Listener {
 }
 
 impl AsFd for Listener {
+    #[inline]
     fn as_fd(&self) -> BorrowedFd<'_> {
         self.socket.as_fd()
     }
@@ -21,10 +19,10 @@ impl Listener {
     #[inline]
     pub fn bind_tcp(addr: [u8; 4], port: u16) -> Result<Self, IoError> {
         let flags = Socket::CLOEXEC | Socket::NONBLOCK;
-        let socket = Socket::create(Family::INET, Socket::STREAM, flags)?;
+        let socket = Socket::create(Socket::INET, Socket::STREAM, flags)?;
 
-        let value = OptValue::from_bool(true);
-        socket.setopt(OptName::REUSEADDR, value.as_value(), value.size())?;
+        let value = opt::from_bool(true);
+        socket.setopt(opt::REUSEADDR, opt::SOCKET, value.as_value(), value.size())?;
 
         let addr = u32::from_ne_bytes(addr);
         let ip_addr = SockAddrIn::new(port.swap_bytes(), addr);
