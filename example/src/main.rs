@@ -1,35 +1,40 @@
 use core::fmt;
 use core::mem::MaybeUninit;
 
-use genos::io;
 use genos::event::poll::Pollfd;
-use seryu::bytes::Reader;
+use genos::io;
+use genos::net::Socket;
+use seryu::bytes::{Reader, Writer};
 use seryu::h1;
 use seryu::os::Listener;
 
 fn main() -> Result<(), Error> {
     let listener = Listener::bind_tcp([127, 0, 0, 1], 4040)?;
 
-    Pollfd::new(&listener, Pollfd::IN).poll(-1)?;
+    loop {
+        Pollfd::new(&listener, Pollfd::IN).poll(-1)?;
+        let client = listener.accept()?;
+        handle_client(client)?;
+    }
+}
 
-    let client = listener.accept()?;
-
+fn handle_client(client: Socket) -> Result<(), Error> {
     Pollfd::new(&client, Pollfd::IN).poll(-1)?;
+
+    // Request
 
     let mut buf = [const { MaybeUninit::uninit() }; 1024];
     let len = io::read(&client, &mut buf)?;
     let mut reader = Reader::new(unsafe { buf[..len].assume_init_ref() });
 
-    println!("{:?}", str::from_utf8(reader.as_bytes()));
-
     let line = h1::read_line(&mut reader)?;
-    let mut buf = MaybeUninit::uninit();
-    let reqline = h1::parse_reqline(line, &mut buf)?;
+    let mut reqline_buf = MaybeUninit::uninit();
+    let reqline = h1::parse_reqline(line, &mut reqline_buf)?;
 
     println!("{reqline:?}");
 
-    let mut buf = [const { MaybeUninit::uninit() }; 64];
-    let mut fields = h1::Fields::new(&mut buf);
+    let mut fields_buf = [const { MaybeUninit::uninit() }; 64];
+    let mut fields = h1::Fields::new(&mut fields_buf);
 
     loop {
         let line = h1::read_line(&mut reader)?;
@@ -42,6 +47,18 @@ fn main() -> Result<(), Error> {
     for field in fields.get() {
         println!("{:?} = {:?}", str::from_utf8(field.name), str::from_utf8(field.value));
     }
+
+    // Response
+
+    let mut writer = Writer::new(&mut buf);
+
+    h1::StatusLine { version: b"HTTP/1.1", status: b"200", reason: b"OK" }
+        .serialize(&mut writer)?;
+
+    h1::Field::new(b"Content-Length", b"0").serialize(&mut writer)?;
+    h1::Field::serialize_eoh(&mut writer)?;
+
+    io::write(&client, writer.init())?;
 
     Ok(())
 }
