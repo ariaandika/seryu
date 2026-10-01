@@ -7,6 +7,7 @@ pub mod os;
 pub mod alloc;
 pub mod bytes;
 pub mod error;
+mod fmt;
 mod matches;
 
 pub mod h1;

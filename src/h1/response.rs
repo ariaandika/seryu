@@ -1,6 +1,7 @@
 use core::mem::MaybeUninit;
 
 use crate::bytes::{InsufficientBuffer, Writer};
+use crate::fmt;
 use crate::h1::{ParseError, matches};
 
 const VERSION_SIZE: usize = b"HTTP/1.1".len();
@@ -31,7 +32,7 @@ const PREFIX_SIZE: usize = VERSION_SIZE + 2 + STATUS_SIZE;
 /// ```not_rust
 /// reason-phrase  = 1*( HTAB / SP / VCHAR / obs-text )
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct StatusLine<'a> {
     /// Response version.
     pub version: &'a [u8; VERSION_SIZE],
@@ -117,4 +118,16 @@ const fn shrink_array<const I: usize, const O: usize>(arr: &[u8; I]) -> &[u8; O]
     const { assert!(O < I) };
     // SAFETY: `O < I`
     unsafe { &*arr.as_ptr().cast() }
+}
+
+// ===== fmt =====
+
+impl<'a> fmt::Debug for StatusLine<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("StatusLine")
+            .field("version", &fmt::debug_ascii(self.version))
+            .field("status", &fmt::debug_ascii(self.status))
+            .field("reason", &fmt::debug_ascii(self.reason))
+            .finish()
+    }
 }

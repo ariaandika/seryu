@@ -2,6 +2,7 @@ use core::mem::MaybeUninit;
 use core::slice;
 
 use crate::bytes::{InsufficientBuffer, Writer};
+use crate::fmt;
 use crate::h1::error::{ParseError, Result};
 use crate::h1::matches;
 
@@ -15,7 +16,7 @@ use crate::h1::matches;
 /// ```not_rust
 /// field-line   = field-name ":" OWS field-value OWS
 /// ```
-#[derive(Debug)]
+#[derive(Clone)]
 pub struct Field<'a> {
     /// Field name.
     pub name: &'a [u8],
@@ -85,7 +86,6 @@ pub const fn parse_field<'a>(bytes: &'a [u8], output: &mut MaybeUninit<Field<'a>
 // ===== Fields =====
 
 /// [`Field`] slice container.
-#[derive(Debug)]
 pub struct Fields<'a, 'b> {
     buf: &'a mut [MaybeUninit<Field<'b>>],
     len: usize,
@@ -100,7 +100,7 @@ impl<'a, 'b> Fields<'a, 'b> {
 
     /// Returns the initialized fields.
     #[inline]
-    pub const fn get(&self) -> &'a [Field<'b>] {
+    pub const fn get(&self) -> &[Field<'b>] {
         unsafe { slice::from_raw_parts(self.buf.as_ptr().sub(self.len).cast(), self.len) }
     }
 
@@ -134,5 +134,22 @@ impl<'a, 'b> Fields<'a, 'b> {
         };
         self.len += 1;
         Ok(())
+    }
+}
+
+// ===== fmt =====
+
+impl<'a> fmt::Debug for Field<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Field")
+            .field("name", &fmt::debug_ascii(self.name))
+            .field("value", &fmt::debug_ascii(self.value))
+            .finish()
+    }
+}
+
+impl<'a, 'b> fmt::Debug for Fields<'a, 'b> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list().entries(self.get()).finish()
     }
 }

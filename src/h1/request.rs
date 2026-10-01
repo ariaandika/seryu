@@ -1,6 +1,7 @@
 use core::mem::MaybeUninit;
 
 use crate::bytes::{InsufficientBuffer, Writer};
+use crate::fmt;
 use crate::h1::ParseError;
 
 /// `HTTP/1.1` Message Request line.
@@ -19,7 +20,7 @@ use crate::h1::ParseError;
 /// [`Method`]: crate::http::Method
 /// [`Version`]: crate::http::Version
 /// [`target`]: crate::h1::target
-#[derive(Debug, Default, Clone)]
+#[derive(Clone)]
 pub struct RequestLine<'a> {
     /// Request method.
     pub method: &'a [u8],
@@ -107,5 +108,17 @@ pub fn parse_reqline<'a, 'b>(
         (&raw mut (*out).target).write(rest.get_unchecked(1..));
 
         Ok(output.assume_init_mut())
+    }
+}
+
+// ===== fmt =====
+
+impl<'a> fmt::Debug for RequestLine<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RequestLine")
+            .field("method", &fmt::debug_ascii(self.method))
+            .field("target", &fmt::debug_ascii(self.target))
+            .field("version", &fmt::debug_ascii(self.version))
+            .finish()
     }
 }

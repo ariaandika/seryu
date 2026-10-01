@@ -44,9 +44,7 @@ fn handle_client(client: Socket) -> Result<(), Error> {
         fields.parse_field(line)?;
     }
 
-    for field in fields.get() {
-        println!("{:?} = {:?}", str::from_utf8(field.name), str::from_utf8(field.value));
-    }
+    println!("{:#?}", fields);
 
     // Response
 

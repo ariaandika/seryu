@@ -53,7 +53,7 @@
 use core::mem::MaybeUninit;
 
 use crate::h1::ParseError;
-use crate::matches;
+use crate::{fmt, matches};
 
 // ===== Origin =====
 
@@ -64,7 +64,7 @@ use crate::matches;
 /// ```not_rust
 /// origin-form    = absolute-path [ "?" query ]
 /// ```
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct Origin<'a> {
     /// Target path.
     pub path: &'a [u8],
@@ -161,5 +161,16 @@ pub const fn parse_origin<'a>(
             return Err(ParseError::InvalidByte);
         }
         bytes = rest;
+    }
+}
+
+// ===== fmt =====
+
+impl<'a> fmt::Debug for Origin<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Origin")
+            .field("path", &fmt::debug_ascii(self.path))
+            .field("query", &self.query.map(fmt::debug_ascii))
+            .finish()
     }
 }
