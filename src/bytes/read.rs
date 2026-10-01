@@ -73,6 +73,7 @@ impl<'a> Reader<'a> {
         };
         let base = self.bytes.as_ptr();
         self.bytes = unsafe { slice::from_raw_parts(base.add(N), remain) };
+        self.read += N;
         unsafe { Some(base.cast::<[u8; N]>().as_ref_unchecked()) }
     }
 }
