@@ -1,5 +1,7 @@
-use crate::bytes::{InsufficientBuffer, Reader};
-use crate::h1::matches;
+use core::hint;
+
+use crate::bytes::Reader;
+use crate::h1::{ParseError, matches};
 
 /// Read a CRLF delimited line.
 ///
@@ -7,11 +9,19 @@ use crate::h1::matches;
 ///
 /// This function also accepts bare LF delimiter.
 #[inline]
-pub fn read_line<'a>(reader: &mut Reader<'a>) -> Result<&'a [u8], InsufficientBuffer> {
+pub fn read_line<'a>(reader: &mut Reader<'a>) -> Result<&'a [u8], ParseError> {
     let Some(line) = matches::find::<b'\n'>(reader.as_bytes()) else {
-        return Err(InsufficientBuffer);
+        return Err(ParseError::InsufficientBuf);
     };
-    reader.assume_read_len(line.len() + 1);
-    let suffix = line.last().copied().unwrap_or(b'\0') == b'\r';
+    reader.assume_read_len(line.len());
+    let Some(&[delim]) = reader.read_chunk() else {
+        // SAFETY: `find` never returns empty bytes
+        unsafe { hint::unreachable_unchecked() }
+    };
+    if delim != b'\n' {
+        // panic!("ffa");
+        return Err(ParseError::InvalidByte);
+    }
+    let suffix = line.last().copied().unwrap_or(b'0') == b'\r';
     Ok(unsafe { line.get_unchecked(..line.len() - suffix as usize) })
 }

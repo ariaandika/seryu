@@ -23,6 +23,10 @@ fn test_parse_line() {
     let parsed = h1::read_line(&mut reader).unwrap();
     assert!(!reader.has_remaining());
     assert_eq!(parsed, b"");
+
+    let line = "Host: example\u{80}.com\r\n";
+    let mut reader = Reader::new(line.as_bytes());
+    assert!(h1::read_line(&mut reader).is_err());
 }
 
 #[test]
