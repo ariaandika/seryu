@@ -17,8 +17,15 @@ enum Entry<T> {
 }
 
 impl<T> Slab<T> {
+    /// # Safety
+    ///
+    /// See [`from_raw_parts_mut`][1].
+    ///
+    /// Additionally, `ptr` must be aligned of `T`.
+    ///
+    /// [1]: core::slice::from_raw_parts_mut
     #[inline]
-    pub const fn from_buf(ptr: *mut u8, cap: usize) -> Self {
+    pub const unsafe fn from_buf(ptr: *mut u8, cap: usize) -> Self {
         Self {
             entry: unsafe { NonNull::new_unchecked(ptr.cast()) },
             len: 0,
