@@ -8,13 +8,13 @@ use seryu::h1;
 
 use crate::Error;
 
-pub fn handle(client: Socket) -> Result<(), Error> {
-    Pollfd::new(&client, Pollfd::IN).poll(-1)?;
+pub fn handle(client: &Socket) -> Result<(), Error> {
+    Pollfd::new(client, Pollfd::IN).poll(-1)?;
 
     // Request
 
     let mut buf = [const { MaybeUninit::uninit() }; 1024];
-    let len = io::read(&client, &mut buf)?;
+    let len = io::read(client, &mut buf)?;
     let mut reader = Reader::new(unsafe { buf[..len].assume_init_ref() });
 
     let line = h1::read_line(&mut reader)?;
@@ -46,7 +46,7 @@ pub fn handle(client: Socket) -> Result<(), Error> {
     h1::Field::new(b"Content-Length", b"0").serialize(&mut writer)?;
     h1::Field::serialize_eoh(&mut writer)?;
 
-    io::write(&client, writer.init())?;
+    io::write(client, writer.init())?;
 
     Ok(())
 }

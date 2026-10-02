@@ -1,10 +1,12 @@
-use core::mem::MaybeUninit;
-use core::ops;
+use core::ptr::NonNull;
+use core::{ops, slice};
 
 use genos::event::Epoll;
 use genos::event::epoll::{self, Event};
-use genos::fd::AsFd;
+use genos::fd::{AsFd, BorrowedFd};
 use seryu::error::IoError;
+
+use crate::alloc;
 
 // ===== EpollKind =====
 
@@ -23,15 +25,24 @@ impl EventKind {
 
 // ===== EpollBuf =====
 
-pub struct EpollBuf<'a> {
-    buf: &'a mut [MaybeUninit<Event>],
+const CAP: usize = 255;
+
+pub struct EpollBuf {
+    buf: NonNull<Event>,
     len: usize,
     off: usize,
     fd: epoll::Epoll,
 }
 
-impl EpollBuf<'_> {
-    pub fn new<'a>(buf: &'a mut [MaybeUninit<Event>]) -> Result<EpollBuf<'a>, IoError> {
+impl AsFd for EpollBuf {
+    fn as_fd(&self) -> BorrowedFd<'_> {
+        self.fd.as_fd()
+    }
+}
+
+impl EpollBuf {
+    pub fn new_static() -> Result<EpollBuf, IoError> {
+        let buf = alloc::leak_slice(CAP);
         let fd = Epoll::create(Epoll::CLOEXEC)?;
         Ok(EpollBuf { buf, len: 0, off: 0, fd })
     }
@@ -43,7 +54,7 @@ impl EpollBuf<'_> {
 
     pub fn pop_event(&mut self) -> Option<Event> {
         if self.off != self.len {
-            let ptr = unsafe { self.buf.as_mut_ptr().add(self.off) };
+            let ptr = unsafe { self.buf.add(self.off) };
             self.off += 1;
             Some(unsafe { ptr.cast::<Event>().read() })
         } else {
@@ -52,13 +63,14 @@ impl EpollBuf<'_> {
     }
 
     pub fn wait_buf(&mut self) -> Result<(), IoError> {
-        self.len = self.fd.wait(self.buf, -1)?;
+        let buf = unsafe { slice::from_raw_parts_mut(self.buf.as_ptr().cast(), CAP) };
+        self.len = self.fd.wait(buf, -1)?;
         self.off = 0;
         Ok(())
     }
 }
 
-impl ops::Deref for EpollBuf<'_> {
+impl ops::Deref for EpollBuf {
     type Target = epoll::Epoll;
 
     fn deref(&self) -> &Self::Target {
