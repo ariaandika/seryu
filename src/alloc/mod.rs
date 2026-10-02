@@ -1,3 +1,3 @@
 pub use slab::Slab;
 
-mod slab;
+pub mod slab;

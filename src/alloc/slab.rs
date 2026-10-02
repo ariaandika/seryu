@@ -1,5 +1,8 @@
+//! [`Slab`] associated types.
 use core::ptr::NonNull;
-use core::{hint, mem};
+use core::{fmt, hint, mem};
+
+// ===== Slab =====
 
 pub struct Slab<T> {
     entry: NonNull<Entry<T>>,
@@ -35,9 +38,9 @@ impl<T> Slab<T> {
     }
 
     #[inline]
-    pub fn insert(&mut self, value: T) -> Result<usize, T> {
+    pub fn insert(&mut self, value: T) -> Result<usize, InsertError<T>> {
         if self.len == self.cap {
-            return Err(value);
+            return Err(InsertError { value });
         }
 
         let target_ptr = unsafe { self.entry.add(self.last_remove) };
@@ -100,5 +103,31 @@ impl<T> Slab<T> {
         };
         self.last_remove = key;
         Some(ok)
+    }
+}
+
+// ===== Error =====
+
+/// An error that occur if there is not enough capacity when inserting slab entry.
+pub struct InsertError<T> {
+    value: T,
+}
+
+impl<T> InsertError<T> {
+    #[inline]
+    pub fn into_value(self) -> T {
+        self.value
+    }
+}
+
+impl<T> fmt::Debug for InsertError<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("InsertFailed").finish_non_exhaustive()
+    }
+}
+
+impl<T> fmt::Display for InsertError<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "failed to insert slab entry: insufficient capacity")
     }
 }
