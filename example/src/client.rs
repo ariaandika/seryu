@@ -1,6 +1,6 @@
 use core::mem::MaybeUninit;
+use core::task::Poll;
 
-use genos::event::poll::Pollfd;
 use genos::io;
 use genos::net::Socket;
 use seryu::bytes::{Reader, Writer};
@@ -9,8 +9,6 @@ use seryu::h1;
 use crate::Error;
 
 pub fn handle(client: &Socket) -> Result<(), Error> {
-    Pollfd::new(client, Pollfd::IN).poll(-1)?;
-
     // Request
 
     let mut buf = [const { MaybeUninit::uninit() }; 1024];
@@ -49,4 +47,19 @@ pub fn handle(client: &Socket) -> Result<(), Error> {
     io::write(client, writer.init())?;
 
     Ok(())
+}
+
+// ===== HttpState =====
+
+pub struct HttpState {}
+
+impl HttpState {
+    pub fn new() -> Self {
+        Self {}
+    }
+
+    pub fn on_socket(&mut self, socket: &Socket) -> Poll<()> {
+        let _ = handle(socket);
+        Poll::Ready(())
+    }
 }

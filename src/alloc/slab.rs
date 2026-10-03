@@ -122,6 +122,11 @@ pub struct InsertError<T> {
 
 impl<T> InsertError<T> {
     #[inline]
+    pub fn new(value: T) -> Self {
+        Self { value }
+    }
+
+    #[inline]
     pub fn into_value(self) -> T {
         self.value
     }

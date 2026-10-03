@@ -18,8 +18,8 @@ pub enum EventKind {
 }
 
 impl EventKind {
-    pub fn from_event(value: Event) -> Option<Self> {
-        if value.data & EV_FLAG == EV_FLAG { Some(Self::Listener) } else { None }
+    pub fn from_raw(raw: u64) -> Option<Self> {
+        if raw & EV_FLAG == EV_FLAG { Some(Self::Listener) } else { None }
     }
 }
 
@@ -50,6 +50,10 @@ impl EpollBuf {
     pub fn add_listener<Fd: AsFd>(&self, socket: &Fd) -> Result<(), IoError> {
         self.add(socket, Epoll::IN | Epoll::ET, LISTENER | EV_FLAG)
             .map_err(<_>::into)
+    }
+
+    pub fn add_read<Fd: AsFd>(&self, fd: &Fd, key: u64) -> Result<(), IoError> {
+        self.add(fd, Epoll::IN | Epoll::ET, key).map_err(<_>::into)
     }
 
     pub fn pop_event(&mut self) -> Option<Event> {
