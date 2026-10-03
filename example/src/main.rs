@@ -25,8 +25,8 @@ fn main() -> Result<(), Error> {
     let mut queue = Queue::new_static();
 
     epoll.add_listener(&listener)?;
-    fds.insert(&listener);
-    fds.insert(&epoll);
+    fds.insert(&listener)?;
+    fds.insert(&epoll)?;
 
     loop {
         // ===== Event scheduling =====
@@ -46,13 +46,13 @@ fn main() -> Result<(), Error> {
                             }
                         }
                     };
-                    let fd = fds.insert_read(&client, tasks.peek_id());
+                    let fd = fds.insert_read(&client, tasks.peek_id())?;
                     epoll.add_read(&client, fd as u64)?;
                     tasks.insert(Task::new(client));
                 }
                 None => {
                     let fd = ev.data as RawFd;
-                    let prop = fds.get_mut(fd).unwrap();
+                    let prop = fds.get_mut(fd);
 
                     if ev.events & Epoll::IN == Epoll::IN
                         && let Some(id) = prop.read_task.take()
