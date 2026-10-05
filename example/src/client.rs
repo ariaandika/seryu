@@ -1,28 +1,38 @@
 use core::mem::MaybeUninit;
+use core::ptr::NonNull;
 use core::task::Poll;
 
 use genos::io;
 use genos::net::Socket;
 use seryu::bytes::{Reader, Writer};
+use seryu::error::IoError;
 use seryu::h1;
 
 use crate::Error;
+use crate::alloc::Arena;
 
-pub fn handle(client: &Socket) -> Result<(), Error> {
-    // Request
+pub fn handle(state: &mut HttpState, client: &Socket) -> Poll<Result<(), Error>> {
+    // ===== Request =====
 
-    let mut buf = [const { MaybeUninit::uninit() }; 1024];
-    let len = io::read(client, &mut buf)?;
-    let mut reader = Reader::new(unsafe { buf[..len].assume_init_ref() });
+    let buf = unsafe { state.arena.spare_capacity_mut()[..state.read].assume_init_ref() };
+    let mut reader = Reader::new(buf);
 
-    let line = h1::read_line(&mut reader)?;
+    let line = match h1::read_line(&mut reader) {
+        Ok(ok) => ok,
+        Err(err) => {
+            return match err {
+                h1::ParseError::InsufficientBytes => Poll::Pending,
+                _ => Poll::Ready(Err(err.into())),
+            };
+        }
+    };
+
     let mut reqline_buf = MaybeUninit::uninit();
     let reqline = h1::parse_reqline(line, &mut reqline_buf)?;
 
     println!("{reqline:?}");
 
-    let mut fields_buf = [const { MaybeUninit::uninit() }; 64];
-    let mut fields = h1::Fields::new(&mut fields_buf);
+    let mut fields = h1::Fields::new(unsafe { &mut *state.fields_buf.as_ptr() });
 
     loop {
         let line = h1::read_line(&mut reader)?;
@@ -34,9 +44,9 @@ pub fn handle(client: &Socket) -> Result<(), Error> {
 
     println!("{:#?}", fields);
 
-    // Response
+    // ===== Response =====
 
-    let mut writer = Writer::new(&mut buf);
+    let mut writer = Writer::new(state.arena.spare_capacity_mut());
 
     h1::StatusLine { version: b"HTTP/1.1", status: b"200", reason: b"OK" }
         .serialize(&mut writer)?;
@@ -46,20 +56,44 @@ pub fn handle(client: &Socket) -> Result<(), Error> {
 
     io::write(client, writer.init())?;
 
-    Ok(())
+    Poll::Ready(Ok(()))
 }
 
 // ===== HttpState =====
 
-pub struct HttpState {}
+type FieldsBuf = [MaybeUninit<h1::Field<'static>>; 32];
+
+pub struct HttpState {
+    arena: Arena,
+    read: usize,
+    fields_buf: NonNull<FieldsBuf>,
+}
 
 impl HttpState {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(mut arena: Arena) -> Result<Self, Error> {
+        let fields_buf = arena.alloc(size_of::<FieldsBuf>())?.cast();
+        Ok(Self { arena, read: 0, fields_buf })
     }
 
     pub fn on_socket(&mut self, socket: &Socket) -> Poll<()> {
-        let _ = handle(socket);
-        Poll::Ready(())
+        match self.on_socket_inner(socket) {
+            Ok(()) => handle(self, socket).map(drop),
+            Err(err) => {
+                eprintln!("client error: {err}");
+                Poll::Ready(())
+            }
+        }
+    }
+
+    fn on_socket_inner(&mut self, socket: &Socket) -> Result<(), IoError> {
+        let buf = &mut self.arena.spare_capacity_mut()[self.read..];
+        self.read += io::read(socket, buf)?;
+        Ok(())
+    }
+}
+
+impl From<HttpState> for Arena {
+    fn from(value: HttpState) -> Self {
+        value.arena
     }
 }

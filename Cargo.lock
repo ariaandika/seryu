@@ -13,7 +13,7 @@ dependencies = [
 [[package]]
 name = "genos"
 version = "0.1.0"
-source = "git+https://github.com/ariaandika/genos.git?rev=6198a9b#6198a9b25bc1cd563af78dada0d717ae4add67f7"
+source = "git+https://github.com/ariaandika/genos.git?rev=7433ac1#7433ac14115f351aeb0e60f39e988a27bb0a658a"
 
 [[package]]
 name = "seryu"

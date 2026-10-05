@@ -3,7 +3,8 @@ use core::task::Poll;
 use genos::net::Socket;
 use seryu::alloc::Slab;
 
-use crate::alloc;
+use crate::Error;
+use crate::alloc::{self, Arena};
 use crate::client::HttpState;
 
 #[derive(Debug, Clone, Copy)]
@@ -16,8 +17,9 @@ pub struct Task {
 }
 
 impl Task {
-    pub fn new(socket: Socket) -> Self {
-        Self { socket, service: HttpState::new(), is_queued: false }
+    pub fn new(socket: Socket, buf: Arena) -> Result<Self, Error> {
+        let service = HttpState::new(buf)?;
+        Ok(Self { socket, service, is_queued: false })
     }
 
     pub fn socket(&self) -> &Socket {
@@ -26,6 +28,12 @@ impl Task {
 
     pub fn poll(&mut self) -> Poll<()> {
         self.service.on_socket(&self.socket)
+    }
+}
+
+impl From<Task> for Arena {
+    fn from(value: Task) -> Self {
+        value.service.into()
     }
 }
 

@@ -4,6 +4,7 @@ use genos::event::Epoll;
 use genos::fd::{AsFd, RawFd};
 use seryu::os::Listener;
 
+use crate::alloc::MemoryPool;
 use crate::event::{EpollBuf, EventKind};
 use crate::rt::{FdTable, Queue, Task, Tasks};
 
@@ -23,6 +24,7 @@ fn main() -> Result<(), Error> {
     let mut fds = FdTable::new_static();
     let mut tasks = Tasks::new_static();
     let mut queue = Queue::new_static();
+    let mut mpool = MemoryPool::new()?;
 
     epoll.add_listener(&listener)?;
     fds.insert(&listener)?;
@@ -48,7 +50,9 @@ fn main() -> Result<(), Error> {
                     };
                     let fd = fds.insert_read(&client, tasks.peek_id())?;
                     epoll.add_read(&client, fd as u64)?;
-                    tasks.insert(Task::new(client));
+
+                    let mem = mpool.create_arena()?;
+                    tasks.insert(Task::new(client, mem)?);
                 }
                 None => {
                     let fd = ev.data as RawFd;
@@ -84,10 +88,14 @@ fn main() -> Result<(), Error> {
                 continue;
             }
 
+            // ===== task deallocation =====
+
             let task = tasks.remove(id).unwrap();
             let socket = task.socket();
             epoll.delete(socket)?;
             fds.remove(socket.as_raw_fd());
+
+            mpool.release(task.into());
         }
 
         queue.clear();
