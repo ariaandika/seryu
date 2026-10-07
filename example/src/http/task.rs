@@ -5,7 +5,7 @@ use seryu::alloc::Slab;
 
 use crate::Error;
 use crate::alloc::{self, Arena};
-use crate::client::HttpState;
+use crate::http::HttpState;
 
 #[derive(Debug, Clone, Copy)]
 pub struct TaskId(u32);

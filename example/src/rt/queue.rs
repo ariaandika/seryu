@@ -1,10 +1,10 @@
 use core::ptr::NonNull;
-use std::slice;
+use core::slice;
 
 use seryu::alloc::slab::InsertError;
 
 use crate::alloc;
-use crate::rt::task::TaskId;
+use crate::http::TaskId;
 
 const CAP: usize = 64;
 

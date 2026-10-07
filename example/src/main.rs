@@ -6,14 +6,14 @@ use seryu::os::Listener;
 
 use crate::alloc::MemoryPool;
 use crate::event::{EpollBuf, EventKind};
-use crate::rt::{FdTable, Queue, Task, Tasks};
+use crate::http::{Task, Tasks};
+use crate::rt::{FdTable, Queue};
 
 mod alloc;
-
-mod client;
 mod event;
-
 mod rt;
+
+mod http;
 
 fn main() -> Result<(), Error> {
     alloc::init_brk();
