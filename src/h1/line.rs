@@ -11,7 +11,7 @@ use crate::h1::{ParseError, matches};
 #[inline]
 pub fn read_line<'a>(reader: &mut Reader<'a>) -> Result<&'a [u8], ParseError> {
     let Some(line) = matches::find::<b'\n'>(reader.as_bytes()) else {
-        return Err(ParseError::InsufficientBuf);
+        return Err(ParseError::InsufficientBytes);
     };
     reader.assume_read_len(line.len());
     let Some(&[delim]) = reader.read_chunk() else {
