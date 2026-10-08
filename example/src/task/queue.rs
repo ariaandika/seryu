@@ -1,24 +1,24 @@
 use core::ptr::NonNull;
-use core::slice;
+use core::{mem, slice};
 
 use seryu::alloc::slab::InsertError;
 
 use crate::alloc;
-use crate::rt::TaskId;
 
 const CAP: usize = 64;
 
-pub struct Queue {
-    buf: NonNull<TaskId>,
+pub struct Queue<T> {
+    buf: NonNull<T>,
     len: usize,
 }
 
-impl Queue {
+impl<T> Queue<T> {
     pub fn new_static() -> Self {
+        const { assert!(!mem::needs_drop::<T>()) }
         Self { buf: alloc::leak_slice(CAP), len: 0 }
     }
 
-    pub fn push(&mut self, task: TaskId) -> Result<(), InsertError<TaskId>> {
+    pub fn push(&mut self, task: T) -> Result<(), InsertError<T>> {
         if self.len == CAP {
             return Err(InsertError::new(task));
         }
@@ -29,7 +29,7 @@ impl Queue {
         Ok(())
     }
 
-    pub fn as_slice(&self) -> &[TaskId] {
+    pub fn as_slice(&self) -> &[T] {
         unsafe { slice::from_raw_parts(self.buf.as_ptr(), self.len) }
     }
 

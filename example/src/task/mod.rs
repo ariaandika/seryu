@@ -1,4 +1,4 @@
-//! Task runtime.
+//! Task manager.
 pub use tasks::{TaskId, Tasks};
 pub use fd_table::FdTable;
 pub use queue::Queue;

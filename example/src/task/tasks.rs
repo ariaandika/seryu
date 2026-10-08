@@ -1,7 +1,6 @@
 use seryu::alloc::Slab;
 
 use crate::alloc;
-use crate::http::Task;
 
 // ===== TaskId =====
 
@@ -9,11 +8,11 @@ use crate::http::Task;
 pub struct TaskId(u32);
 
 impl TaskId {
-    fn new(id: u32) -> Self {
+    pub(super) fn new(id: u32) -> Self {
         Self(id)
     }
 
-    fn raw(self) -> u32 {
+    pub(super) fn raw(self) -> u32 {
         self.0
     }
 }
@@ -22,14 +21,14 @@ impl TaskId {
 
 const CAP: usize = 512;
 
-pub struct Tasks {
-    buf: Slab<Task>,
+pub struct Tasks<T> {
+    buf: Slab<T>,
 }
 
-impl Tasks {
+impl<T> Tasks<T> {
     pub fn new_static() -> Self {
-        let ptr = alloc::leak_slice::<Task>(512).as_ptr().cast();
-        let buf = unsafe { Slab::from_buf(ptr, CAP * size_of::<Task>()) };
+        let ptr = alloc::leak_slice::<T>(512).as_ptr().cast();
+        let buf = unsafe { Slab::from_buf(ptr, CAP * size_of::<T>()) };
         Self { buf }
     }
 
@@ -37,18 +36,18 @@ impl Tasks {
         TaskId::new(self.buf.peek_key().try_into().unwrap())
     }
 
-    pub fn get_mut(&mut self, id: TaskId) -> Option<&mut Task> {
-        self.buf.get_mut(id.raw() as usize)
-    }
-
-    pub fn insert(&mut self, task: Task) -> TaskId {
+    pub fn insert(&mut self, task: T) -> TaskId {
         self.buf
             .insert(task)
             .map(|id| TaskId::new(id.try_into().unwrap()))
             .unwrap()
     }
 
-    pub fn remove(&mut self, id: TaskId) -> Option<Task> {
+    pub fn get_mut(&mut self, id: TaskId) -> Option<&mut T> {
+        self.buf.get_mut(id.raw() as usize)
+    }
+
+    pub fn remove(&mut self, id: TaskId) -> Option<T> {
         self.buf.remove(id.raw() as usize)
     }
 }

@@ -1,3 +1,4 @@
+#![allow(clippy::module_inception)]
 use core::fmt;
 
 use genos::event::Epoll;
@@ -6,12 +7,13 @@ use seryu::os::Listener;
 
 use crate::alloc::MemoryPool;
 use crate::event::{EpollBuf, EventKind};
-use crate::http::Task;
-use crate::rt::{FdTable, Queue, Tasks};
+use crate::http::HttpTask;
+use crate::task::{FdTable, Queue, Tasks};
 
 mod alloc;
+
 mod event;
-mod rt;
+mod task;
 
 mod http;
 
@@ -52,7 +54,8 @@ fn main() -> Result<(), Error> {
                     epoll.add_read(&client, fd as u64)?;
 
                     let mem = mpool.alloc_page()?;
-                    tasks.insert(Task::new(client, mem)?);
+                    let task = HttpTask::new(client, mem)?;
+                    tasks.insert(task);
                 }
                 None => {
                     let fd = ev.data as RawFd;
@@ -60,20 +63,14 @@ fn main() -> Result<(), Error> {
 
                     if ev.events & Epoll::IN == Epoll::IN
                         && let Some(id) = prop.read_task.take()
-                        && let Some(task) = tasks.get_mut(id)
-                        && !task.is_queued
                     {
                         queue.push(id).unwrap();
-                        task.is_queued = true;
                     }
 
                     if ev.events & Epoll::OUT == Epoll::OUT
                         && let Some(id) = prop.write_task.take()
-                        && let Some(task) = tasks.get_mut(id)
-                        && !task.is_queued
                     {
                         queue.push(id).unwrap();
-                        task.is_queued = true;
                     }
                 }
             }
@@ -82,8 +79,10 @@ fn main() -> Result<(), Error> {
         // ===== Task execution =====
 
         for &id in queue.as_slice() {
-            let task = tasks.get_mut(id).unwrap();
-            task.is_queued = false;
+            let Some(task) = tasks.get_mut(id) else {
+                // dangling task id in scheduler
+                continue;
+            };
 
             if task.poll().is_pending() {
                 continue;

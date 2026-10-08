@@ -13,10 +13,9 @@ use crate::http::{IoBuffer, TaskPage, h1};
 
 // ===== Task =====
 
-pub struct Task {
+pub struct HttpTask {
     pub page: TaskPage,
     pub socket: Socket,
-    pub is_queued: bool,
     read_off: usize,
     read_buf: IoBuffer,
     write_buf: IoBuffer,
@@ -29,22 +28,13 @@ enum Phase {
     Response,
 }
 
-impl Task {
+impl HttpTask {
     pub fn new(socket: Socket, page: TaskPage) -> Result<Self, Error> {
         let base = page.as_ptr();
         let read_buf = unsafe { IoBuffer::from_raw(base) };
         let write_buf = unsafe { IoBuffer::from_raw(base.add(Page::SIZE)) };
         let headers = unsafe { base.add(Page::SIZE * 2).cast() };
-        Ok(Self {
-            page,
-            socket,
-            is_queued: false,
-            read_off: 0,
-            read_buf,
-            write_buf,
-            headers,
-            phase: Phase::Request,
-        })
+        Ok(Self { page, socket, read_off: 0, read_buf, write_buf, headers, phase: Phase::Request })
     }
 
     pub fn poll(&mut self) -> Poll<()> {
@@ -52,7 +42,7 @@ impl Task {
     }
 }
 
-impl Task {
+impl HttpTask {
     fn poll_inner(&mut self) -> Poll<Result<(), Error>> {
         for _ in 0..24 {
             match self.phase {
