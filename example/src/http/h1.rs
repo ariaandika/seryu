@@ -1,99 +1,72 @@
 use core::mem::MaybeUninit;
-use core::ptr::NonNull;
-use core::task::Poll;
 
-use genos::io;
-use genos::net::Socket;
 use seryu::bytes::{Reader, Writer};
-use seryu::error::IoError;
 use seryu::h1;
 
 use crate::Error;
-use crate::alloc::Arena;
 
-pub fn handle(state: &mut HttpState, client: &Socket) -> Poll<Result<(), Error>> {
-    // ===== Request =====
+pub type HeadersBuf<'a> = [MaybeUninit<h1::Field<'a>>; MAX_HEADERS as usize];
 
-    let buf = unsafe { state.arena.spare_capacity_mut()[..state.read].assume_init_ref() };
-    let mut reader = Reader::new(buf);
+const MAX_HEADERS: u32 = 24;
+const MAX_HEADERS_SIZE: usize = 4096;
 
-    let line = match h1::read_line(&mut reader) {
-        Ok(ok) => ok,
-        Err(err) => {
-            return match err {
-                h1::ParseError::InsufficientBytes => Poll::Pending,
-                _ => Poll::Ready(Err(err.into())),
-            };
-        }
-    };
-
-    let mut reqline_buf = MaybeUninit::uninit();
-    let reqline = h1::parse_reqline(line, &mut reqline_buf)?;
-
+pub fn request_handler(reqline: &h1::RequestLine, headers: &[h1::Field]) {
     println!("{reqline:?}");
+    for header in headers {
+        println!("{header:?}");
+    }
+}
 
-    let mut fields = h1::Fields::new(unsafe { &mut *state.fields_buf.as_ptr() });
+pub fn response_writer(writer: &mut Writer) -> Result<(), Error> {
+    h1::StatusLine { version: b"HTTP/1.1", status: b"200", reason: b"OK" }.serialize(writer)?;
+    h1::Field::new(b"Content-Length", b"0").serialize(writer)?;
+    h1::Field::serialize_eoh(writer)?;
+    Ok(())
+}
 
-    loop {
-        let line = h1::read_line(&mut reader)?;
-        if line.is_empty() {
+/// Returns the length of the request in bytes.
+///
+/// Returns `0` if the there is not enough bytes to complete parsing.
+pub fn scan_request(bytes: &[u8]) -> Result<u32, Error> {
+    let mut reader = Reader::new(bytes);
+    for _ in 0..=MAX_HEADERS {
+        if reader.read_len() > MAX_HEADERS_SIZE {
             break;
         }
-        fields.parse_field(line)?;
-    }
-
-    println!("{:#?}", fields);
-
-    // ===== Response =====
-
-    let mut writer = Writer::new(state.arena.spare_capacity_mut());
-
-    h1::StatusLine { version: b"HTTP/1.1", status: b"200", reason: b"OK" }
-        .serialize(&mut writer)?;
-
-    h1::Field::new(b"Content-Length", b"0").serialize(&mut writer)?;
-    h1::Field::serialize_eoh(&mut writer)?;
-
-    io::write(client, writer.init())?;
-
-    Poll::Ready(Ok(()))
-}
-
-// ===== HttpState =====
-
-type FieldsBuf = [MaybeUninit<h1::Field<'static>>; 32];
-
-pub struct HttpState {
-    arena: Arena,
-    read: usize,
-    fields_buf: NonNull<FieldsBuf>,
-}
-
-impl HttpState {
-    pub fn new(mut arena: Arena) -> Result<Self, Error> {
-        let fields_buf = arena.alloc(size_of::<FieldsBuf>())?.cast();
-        Ok(Self { arena, read: 0, fields_buf })
-    }
-
-    pub fn on_socket(&mut self, socket: &Socket) -> Poll<()> {
-        match self.on_socket_inner(socket) {
-            Ok(()) => handle(self, socket).map(drop),
+        match h1::read_line(&mut reader) {
+            Ok(line) => {
+                if line.is_empty() {
+                    return Ok(reader.read_len() as _);
+                }
+            }
             Err(err) => {
-                eprintln!("client error: {err}");
-                Poll::Ready(())
+                return match err {
+                    h1::ParseError::InsufficientBytes => Ok(0),
+                    _ => Err(err.into()),
+                };
             }
         }
     }
 
-    fn on_socket_inner(&mut self, socket: &Socket) -> Result<(), IoError> {
-        let buf = &mut self.arena.spare_capacity_mut()[self.read..];
-        self.read += io::read(socket, buf)?;
-        Ok(())
-    }
+    Err("excessive headers".into())
 }
 
-impl From<HttpState> for Arena {
-    fn from(value: HttpState) -> Self {
-        value.arena
+pub fn parse_request<'a>(
+    bytes: &'a [u8],
+    reqline: &mut MaybeUninit<h1::RequestLine<'a>>,
+    headers: &mut HeadersBuf<'a>,
+) -> Result<u32, Error> {
+    let mut reader = Reader::new(bytes);
+    let line = h1::read_line(&mut reader)?;
+    h1::parse_reqline(line, reqline)?;
+    let mut header_len = 0;
+    while let Some(header_mut) = headers.get_mut(header_len as usize) {
+        let line = h1::read_line(&mut reader)?;
+        if line.is_empty() {
+            break;
+        }
+        h1::parse_field(line, header_mut)?;
+        header_len += 1;
     }
+    Ok(header_len)
 }

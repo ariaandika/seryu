@@ -1,73 +1,109 @@
-use core::task::Poll;
+use core::mem::MaybeUninit;
+use core::ptr::NonNull;
+use core::task::{Poll, ready};
 
+use genos::io;
 use genos::net::Socket;
-use seryu::alloc::Slab;
+use seryu::bytes::Writer;
 
 use crate::Error;
-use crate::alloc::{self, Arena};
-use crate::http::HttpState;
+use crate::alloc::Page;
+use crate::http::h1::HeadersBuf;
+use crate::http::{IoBuffer, TaskPage, h1};
 
-#[derive(Debug, Clone, Copy)]
-pub struct TaskId(u32);
+// ===== Task =====
 
 pub struct Task {
-    socket: Socket,
-    service: HttpState,
+    pub page: TaskPage,
+    pub socket: Socket,
     pub is_queued: bool,
+    read_off: usize,
+    read_buf: IoBuffer,
+    write_buf: IoBuffer,
+    headers: NonNull<HeadersBuf<'static>>,
+    phase: Phase,
+}
+
+enum Phase {
+    Request,
+    Response,
 }
 
 impl Task {
-    pub fn new(socket: Socket, buf: Arena) -> Result<Self, Error> {
-        let service = HttpState::new(buf)?;
-        Ok(Self { socket, service, is_queued: false })
-    }
-
-    pub fn socket(&self) -> &Socket {
-        &self.socket
+    pub fn new(socket: Socket, page: TaskPage) -> Result<Self, Error> {
+        let base = page.as_ptr();
+        let read_buf = unsafe { IoBuffer::from_raw(base) };
+        let write_buf = unsafe { IoBuffer::from_raw(base.add(Page::SIZE)) };
+        let headers = unsafe { base.add(Page::SIZE * 2).cast() };
+        Ok(Self {
+            page,
+            socket,
+            is_queued: false,
+            read_off: 0,
+            read_buf,
+            write_buf,
+            headers,
+            phase: Phase::Request,
+        })
     }
 
     pub fn poll(&mut self) -> Poll<()> {
-        self.service.on_socket(&self.socket)
+        self.poll_inner().map(drop)
     }
 }
 
-impl From<Task> for Arena {
-    fn from(value: Task) -> Self {
-        value.service.into()
+impl Task {
+    fn poll_inner(&mut self) -> Poll<Result<(), Error>> {
+        for _ in 0..24 {
+            match self.phase {
+                Phase::Request => {
+                    let len = loop {
+                        match h1::scan_request(&self.read_buf.as_slice()[self.read_off..])? {
+                            0 => {
+                                ready!(self.poll_read())?;
+                                continue;
+                            }
+                            len => break len as usize,
+                        }
+                    };
+                    let request = &self.read_buf.as_slice()[self.read_off..][..len];
+                    let mut reqline = MaybeUninit::uninit();
+                    let headers = unsafe { self.headers.cast().as_mut() };
+                    let header_len = h1::parse_request(request, &mut reqline, headers)?;
+
+                    unsafe {
+                        let headers = headers[..header_len as usize].assume_init_ref();
+                        h1::request_handler(reqline.assume_init_ref(), headers)
+                    };
+                    self.read_off += len;
+                    self.phase = Phase::Response;
+                }
+                Phase::Response => {
+                    let mut writer = Writer::new(self.write_buf.spare_capacity_mut());
+                    h1::response_writer(&mut writer)?;
+                    io::write(&self.socket, writer.init())?;
+                    self.write_buf.clear();
+                    self.phase = Phase::Request;
+                }
+            }
+        }
+        Poll::Pending
     }
-}
 
-// ===== Tasks =====
-
-const CAP: usize = 512;
-
-pub struct Tasks {
-    buf: Slab<Task>,
-}
-
-impl Tasks {
-    pub fn new_static() -> Self {
-        let ptr = alloc::leak_slice::<Task>(512).as_ptr().cast();
-        let buf = unsafe { Slab::from_buf(ptr, CAP * size_of::<Task>()) };
-        Self { buf }
-    }
-
-    pub fn peek_id(&self) -> TaskId {
-        TaskId(self.buf.peek_key().try_into().unwrap())
-    }
-
-    pub fn get_mut(&mut self, id: TaskId) -> Option<&mut Task> {
-        self.buf.get_mut(id.0 as usize)
-    }
-
-    pub fn insert(&mut self, task: Task) -> TaskId {
-        self.buf
-            .insert(task)
-            .map(|id| TaskId(id.try_into().unwrap()))
-            .unwrap()
-    }
-
-    pub fn remove(&mut self, id: TaskId) -> Option<Task> {
-        self.buf.remove(id.0 as usize)
+    fn poll_read(&mut self) -> Poll<Result<(), Error>> {
+        let read = match io::read(&self.socket, self.read_buf.spare_capacity_mut()) {
+            Ok(0) => return Poll::Ready(Ok(())),
+            Ok(ok) => ok,
+            Err(err) => {
+                return if err.code().is_retry() {
+                    Poll::Pending
+                } else {
+                    Poll::Ready(Err(err.into()))
+                };
+            }
+        };
+        let new_len = self.read_buf.len() + read;
+        unsafe { self.read_buf.set_len(new_len) };
+        Poll::Ready(Ok(()))
     }
 }

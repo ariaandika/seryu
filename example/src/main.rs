@@ -6,8 +6,8 @@ use seryu::os::Listener;
 
 use crate::alloc::MemoryPool;
 use crate::event::{EpollBuf, EventKind};
-use crate::http::{Task, Tasks};
-use crate::rt::{FdTable, Queue};
+use crate::http::Task;
+use crate::rt::{FdTable, Queue, Tasks};
 
 mod alloc;
 mod event;
@@ -51,7 +51,7 @@ fn main() -> Result<(), Error> {
                     let fd = fds.insert_read(&client, tasks.peek_id())?;
                     epoll.add_read(&client, fd as u64)?;
 
-                    let mem = mpool.create_arena()?;
+                    let mem = mpool.alloc_page()?;
                     tasks.insert(Task::new(client, mem)?);
                 }
                 None => {
@@ -83,6 +83,7 @@ fn main() -> Result<(), Error> {
 
         for &id in queue.as_slice() {
             let task = tasks.get_mut(id).unwrap();
+            task.is_queued = false;
 
             if task.poll().is_pending() {
                 continue;
@@ -91,11 +92,10 @@ fn main() -> Result<(), Error> {
             // ===== task deallocation =====
 
             let task = tasks.remove(id).unwrap();
-            let socket = task.socket();
-            epoll.delete(socket)?;
-            fds.remove(socket.as_raw_fd());
+            epoll.delete(&task.socket)?;
+            fds.remove(task.socket.as_raw_fd());
 
-            mpool.release(task.into());
+            mpool.release(task.page);
         }
 
         queue.clear();

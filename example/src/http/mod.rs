@@ -1,5 +1,6 @@
-pub use h1::HttpState;
-pub use task::{Task, TaskId, Tasks};
+pub use buf::{IoBuffer, TaskPage};
+pub use task::Task;
 
+mod buf;
 mod h1;
 mod task;

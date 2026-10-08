@@ -55,6 +55,12 @@ impl<T, C> Buffer<T, C> {
         self.len
     }
 
+    /// Clears the buffer content, restoring original capacity.
+    #[inline]
+    pub const fn clear(&mut self) {
+        self.len = 0;
+    }
+
     /// Returns the initialized elements as shared slice.
     #[inline]
     pub const fn as_slice(&self) -> &[T] {
