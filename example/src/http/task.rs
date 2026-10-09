@@ -2,6 +2,7 @@ use core::mem::MaybeUninit;
 use core::ptr::NonNull;
 use core::task::{Poll, ready};
 
+use genos::fd::AsFd;
 use genos::io;
 use genos::net::Socket;
 use seryu::bytes::Writer;
@@ -10,10 +11,13 @@ use crate::Error;
 use crate::alloc::Page;
 use crate::http::h1::HeadersBuf;
 use crate::http::{IoBuffer, TaskPage, h1};
+use crate::rt::Shared;
+use crate::task::TaskId;
 
 // ===== Task =====
 
 pub struct HttpTask {
+    pub id: TaskId,
     pub page: TaskPage,
     pub socket: Socket,
     read_off: usize,
@@ -26,35 +30,45 @@ pub struct HttpTask {
 enum Phase {
     Request,
     Response,
+    Disconnect,
 }
 
 impl HttpTask {
-    pub fn new(socket: Socket, page: TaskPage) -> Result<Self, Error> {
+    pub fn new(id: TaskId, socket: Socket, page: TaskPage) -> Result<Self, Error> {
         let base = page.as_ptr();
         let read_buf = unsafe { IoBuffer::from_raw(base) };
         let write_buf = unsafe { IoBuffer::from_raw(base.add(Page::SIZE)) };
         let headers = unsafe { base.add(Page::SIZE * 2).cast() };
-        Ok(Self { page, socket, read_off: 0, read_buf, write_buf, headers, phase: Phase::Request })
-    }
-
-    pub fn poll(&mut self) -> Poll<()> {
-        self.poll_inner().map(drop)
+        Ok(Self {
+            id,
+            page,
+            socket,
+            read_off: 0,
+            read_buf,
+            write_buf,
+            headers,
+            phase: Phase::Request,
+        })
     }
 }
 
+// ===== poll entry point =====
+
 impl HttpTask {
+    pub fn poll(&mut self) -> Poll<()> {
+        self.poll_inner().map(drop)
+    }
+
     fn poll_inner(&mut self) -> Poll<Result<(), Error>> {
-        for _ in 0..24 {
+        loop {
             match self.phase {
                 Phase::Request => {
-                    let len = loop {
-                        match h1::scan_request(&self.read_buf.as_slice()[self.read_off..])? {
-                            0 => {
-                                ready!(self.poll_read())?;
-                                continue;
-                            }
-                            len => break len as usize,
+                    let len = match h1::scan_request(&self.read_buf.as_slice()[self.read_off..])? {
+                        0 => {
+                            ready!(self.poll_read())?;
+                            continue;
                         }
+                        len => len as usize,
                     };
                     let request = &self.read_buf.as_slice()[self.read_off..][..len];
                     let mut reqline = MaybeUninit::uninit();
@@ -75,25 +89,38 @@ impl HttpTask {
                     self.write_buf.clear();
                     self.phase = Phase::Request;
                 }
+                Phase::Disconnect => {
+                    return Poll::Ready(Ok(()));
+                }
             }
         }
-        Poll::Pending
     }
+}
 
+// ===== poll underlying io =====
+
+impl HttpTask {
     fn poll_read(&mut self) -> Poll<Result<(), Error>> {
-        let read = match io::read(&self.socket, self.read_buf.spare_capacity_mut()) {
-            Ok(0) => return Poll::Ready(Ok(())),
-            Ok(ok) => ok,
+        match io::read(&self.socket, self.read_buf.spare_capacity_mut()) {
+            Ok(read) => {
+                if read == 0 {
+                    // read `0` means EOF, therefore disconnect
+                    self.phase = Phase::Disconnect;
+                } else {
+                    let new_len = self.read_buf.len() + read;
+                    unsafe { self.read_buf.set_len(new_len) };
+                }
+                Poll::Ready(Ok(()))
+            }
             Err(err) => {
-                return if err.code().is_retry() {
+                if err.code().is_retry() {
+                    // would block, register the event interest
+                    Shared::get().fds.get_mut(self.socket.as_raw_fd()).read_task = Some(self.id);
                     Poll::Pending
                 } else {
                     Poll::Ready(Err(err.into()))
-                };
+                }
             }
-        };
-        let new_len = self.read_buf.len() + read;
-        unsafe { self.read_buf.set_len(new_len) };
-        Poll::Ready(Ok(()))
+        }
     }
 }
