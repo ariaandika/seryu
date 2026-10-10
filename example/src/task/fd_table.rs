@@ -4,20 +4,20 @@ use genos::fd::{AsFd, BorrowedFd, RawFd};
 use seryu::alloc::slab::InsertError;
 
 use crate::alloc;
-use crate::task::TaskId;
+use crate::task::WakerData;
 
 // ===== FdProp =====
 
 #[derive(Clone)]
 pub struct FdProp {
     pub fd: RawFd,
-    pub read_task: Option<TaskId>,
-    pub write_task: Option<TaskId>,
+    pub read: Option<WakerData>,
+    pub write: Option<WakerData>,
 }
 
 impl FdProp {
-    fn new(fd: RawFd, read_task: Option<TaskId>) -> Self {
-        Self { fd, read_task, write_task: None }
+    fn new(fd: RawFd) -> Self {
+        Self { fd, read: None, write: None }
     }
 }
 
@@ -43,29 +43,25 @@ impl FdTable {
 
     pub fn get_mut(&mut self, fd: RawFd) -> &mut FdProp {
         let idx = fd.strict_sub(FD_OFF) as usize;
+        if idx >= CAP {
+            panic!("`FdTable::get_mut` out of bounds");
+        }
         unsafe { self.ptr.add(idx).as_mut() }
     }
 
     pub fn insert<Fd: AsFd>(&mut self, fd: &Fd) -> Result<RawFd, InsertError<()>> {
-        self.insert_inner(fd, None)
-    }
-
-    pub fn insert_read<Fd: AsFd>(&mut self, fd: &Fd, task: TaskId) -> Result<i32, InsertError<()>> {
-        self.insert_inner(fd, Some(task))
-    }
-
-    fn insert_inner<Fd: AsFd>(
-        &mut self,
-        fd: &Fd,
-        task: Option<TaskId>,
-    ) -> Result<RawFd, InsertError<()>> {
         let fd = fd.as_raw_fd();
         let idx = fd.strict_sub(FD_OFF) as usize;
         if idx >= CAP {
             return Err(InsertError::new(()));
         }
-        unsafe { self.ptr.add(idx).write(FdProp::new(fd, task)) };
+        unsafe { self.ptr.add(idx).write(FdProp::new(fd)) };
         Ok(fd)
+    }
+
+    pub fn register_read<Fd: AsFd + ?Sized>(&mut self, fd: &Fd, waker: WakerData) {
+        // TODO: multiple waker for each fd
+        self.get_mut(fd.as_raw_fd()).read = Some(waker);
     }
 
     pub fn remove(&mut self, _fd: RawFd) {

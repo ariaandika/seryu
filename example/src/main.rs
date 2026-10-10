@@ -1,5 +1,6 @@
 #![allow(clippy::module_inception)]
 use core::fmt;
+use core::task::Context;
 
 use genos::event::Epoll;
 use genos::fd::{AsFd, RawFd};
@@ -9,7 +10,7 @@ use crate::alloc::MemoryPool;
 use crate::event::{EpollBuf, EventKind};
 use crate::http::HttpTask;
 use crate::rt::Shared;
-use crate::task::{FdTable, Queue, Tasks};
+use crate::task::{FdTable, Queue, Tasks, WakerData};
 
 mod alloc;
 mod rt;
@@ -44,7 +45,7 @@ fn main() -> Result<(), Error> {
         while let Some(ev) = epoll.pop_event() {
             match Ev::from_raw(ev.data) {
                 Some(Ev::Listener) => {
-                    let client = match listener.accept() {
+                    let socket = match listener.accept() {
                         Ok(ok) => ok,
                         Err(err) => {
                             if err.is_retry() {
@@ -54,12 +55,12 @@ fn main() -> Result<(), Error> {
                             }
                         }
                     };
-                    let fd = shared.fds.insert_read(&client, tasks.peek_id())?;
-                    epoll.add_read(&client, fd as u64)?;
+                    let fd = shared.fds.insert(&socket)?;
+                    WakerData::new(tasks.peek_id()).register_read(&socket);
+                    epoll.add_read(&socket, fd as u64)?;
 
-                    let id = tasks.peek_id();
                     let mem = mpool.alloc_page()?;
-                    let task = HttpTask::new(id, client, mem)?;
+                    let task = HttpTask::new(socket, mem)?;
                     tasks.insert(task);
                 }
                 None => {
@@ -67,15 +68,15 @@ fn main() -> Result<(), Error> {
                     let prop = shared.fds.get_mut(fd);
 
                     if ev.events & Epoll::IN == Epoll::IN
-                        && let Some(id) = prop.read_task.take()
+                        && let Some(waker) = prop.read.take()
                     {
-                        queue.push(id).unwrap();
+                        queue.push(waker.id()).unwrap();
                     }
 
                     if ev.events & Epoll::OUT == Epoll::OUT
-                        && let Some(id) = prop.write_task.take()
+                        && let Some(waker) = prop.write.take()
                     {
-                        queue.push(id).unwrap();
+                        queue.push(waker.id()).unwrap();
                     }
                 }
             }
@@ -90,7 +91,11 @@ fn main() -> Result<(), Error> {
             };
 
             // make sure to not borrow `shared` before `poll()`
-            if task.poll().is_pending() {
+            let waker_data = WakerData::new(id);
+            // SAFETY: `waker_data` does not move
+            let waker = unsafe { waker_data.create_waker() };
+            let mut cx = Context::from_waker(&waker);
+            if task.poll(&mut cx).is_pending() {
                 continue;
             }
 

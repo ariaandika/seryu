@@ -1,8 +1,7 @@
 use core::mem::MaybeUninit;
 use core::ptr::NonNull;
-use core::task::{Poll, ready};
+use core::task::{Context, Poll, ready};
 
-use genos::fd::AsFd;
 use genos::io;
 use genos::net::Socket;
 use seryu::bytes::Writer;
@@ -11,13 +10,11 @@ use crate::Error;
 use crate::alloc::Page;
 use crate::http::h1::HeadersBuf;
 use crate::http::{IoBuffer, TaskPage, h1};
-use crate::rt::Shared;
-use crate::task::TaskId;
+use crate::task::WakerData;
 
 // ===== Task =====
 
 pub struct HttpTask {
-    pub id: TaskId,
     pub page: TaskPage,
     pub socket: Socket,
     read_off: usize,
@@ -34,38 +31,29 @@ enum Phase {
 }
 
 impl HttpTask {
-    pub fn new(id: TaskId, socket: Socket, page: TaskPage) -> Result<Self, Error> {
+    pub fn new(socket: Socket, page: TaskPage) -> Result<Self, Error> {
         let base = page.as_ptr();
         let read_buf = unsafe { IoBuffer::from_raw(base) };
         let write_buf = unsafe { IoBuffer::from_raw(base.add(Page::SIZE)) };
         let headers = unsafe { base.add(Page::SIZE * 2).cast() };
-        Ok(Self {
-            id,
-            page,
-            socket,
-            read_off: 0,
-            read_buf,
-            write_buf,
-            headers,
-            phase: Phase::Request,
-        })
+        Ok(Self { page, socket, read_off: 0, read_buf, write_buf, headers, phase: Phase::Request })
     }
 }
 
 // ===== poll entry point =====
 
 impl HttpTask {
-    pub fn poll(&mut self) -> Poll<()> {
-        self.poll_inner().map(drop)
+    pub fn poll(&mut self, cx: &mut Context) -> Poll<()> {
+        self.poll_inner(cx).map(drop)
     }
 
-    fn poll_inner(&mut self) -> Poll<Result<(), Error>> {
+    fn poll_inner(&mut self, cx: &mut Context) -> Poll<Result<(), Error>> {
         loop {
             match self.phase {
                 Phase::Request => {
                     let len = match h1::scan_request(&self.read_buf.as_slice()[self.read_off..])? {
                         0 => {
-                            ready!(self.poll_read())?;
+                            ready!(self.poll_read(cx))?;
                             continue;
                         }
                         len => len as usize,
@@ -100,7 +88,7 @@ impl HttpTask {
 // ===== poll underlying io =====
 
 impl HttpTask {
-    fn poll_read(&mut self) -> Poll<Result<(), Error>> {
+    fn poll_read(&mut self, cx: &mut Context) -> Poll<Result<(), Error>> {
         match io::read(&self.socket, self.read_buf.spare_capacity_mut()) {
             Ok(read) => {
                 if read == 0 {
@@ -115,7 +103,7 @@ impl HttpTask {
             Err(err) => {
                 if err.code().is_retry() {
                     // would block, register the event interest
-                    Shared::get().fds.get_mut(self.socket.as_raw_fd()).read_task = Some(self.id);
+                    WakerData::from_waker(cx.waker()).register_read(&self.socket);
                     Poll::Pending
                 } else {
                     Poll::Ready(Err(err.into()))
