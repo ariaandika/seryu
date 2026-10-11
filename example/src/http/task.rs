@@ -78,8 +78,12 @@ impl HttpTask {
                     self.read_off += len;
 
                     // response
+
                     let mut writer = Writer::new(self.write_buf.spare_capacity_mut());
                     h1::response_writer(&mut writer)?;
+                    let write = writer.write_len();
+                    unsafe { self.write_buf.set_len(write) };
+
                     self.write_off = 0;
                     self.phase = Phase::WriteResponse;
                 }
@@ -87,6 +91,7 @@ impl HttpTask {
                     ready!(self.poll_write_all(cx)?);
                     self.write_off = 0;
                     self.write_buf.clear();
+                    self.phase = Phase::ReadRequest;
                 }
                 Phase::Disconnect => {
                     return Poll::Ready(Ok(()));
