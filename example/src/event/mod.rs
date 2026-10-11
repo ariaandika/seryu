@@ -1,83 +1,67 @@
 use core::ptr::NonNull;
-use core::{ops, slice};
+use core::slice;
 
-use genos::event::Epoll;
-use genos::event::epoll::{self, Event};
-use genos::fd::{AsFd, BorrowedFd};
-use seryu::error::IoError;
+use genos::event::epoll::{self, Epoll};
+use genos::fd::AsFd;
+use genos::{arch, sys};
 
 use crate::alloc;
 
-// ===== EpollKind =====
+// ===== Event =====
 
+/// Mark special event.
 const EV_FLAG: u64 = !(u64::MAX >> 1);
-const LISTENER: u64 = 1;
 
-pub enum EventKind {
+/// A special os event.
+///
+/// This event may have special treatment than arbitrary os event.
+pub enum Event {
     Listener,
 }
 
-impl EventKind {
-    pub fn from_raw(raw: u64) -> Option<Self> {
-        if raw & EV_FLAG == EV_FLAG { Some(Self::Listener) } else { None }
+impl Event {
+    pub fn from_epoll(event: &epoll::Event) -> Option<Self> {
+        if event.data & EV_FLAG == EV_FLAG { Some(Self::Listener) } else { None }
+    }
+
+    pub fn add_with<Fd: AsFd>(
+        epoll: &Epoll,
+        listener: &Fd,
+        event: Self,
+    ) -> Result<(), sys::Error<arch::sys_epoll_ctl>> {
+        epoll.add(listener, Epoll::IN | Epoll::ET, event as u64 | EV_FLAG)
     }
 }
 
-// ===== EpollBuf =====
+// ===== Events =====
 
 const CAP: usize = 255;
 
-pub struct EpollBuf {
-    buf: NonNull<Event>,
+pub struct Events {
+    buf: NonNull<epoll::Event>,
     len: usize,
     off: usize,
-    fd: epoll::Epoll,
 }
 
-impl AsFd for EpollBuf {
-    fn as_fd(&self) -> BorrowedFd<'_> {
-        self.fd.as_fd()
-    }
-}
-
-impl EpollBuf {
-    pub fn new_static() -> Result<EpollBuf, IoError> {
+impl Events {
+    pub fn new_static() -> Self {
         let buf = alloc::leak_slice(CAP);
-        let fd = Epoll::create(Epoll::CLOEXEC)?;
-        Ok(EpollBuf { buf, len: 0, off: 0, fd })
+        Events { buf, len: 0, off: 0 }
     }
 
-    pub fn add_listener<Fd: AsFd>(&self, socket: &Fd) -> Result<(), IoError> {
-        self.add(socket, Epoll::IN | Epoll::ET, LISTENER | EV_FLAG)
-            .map_err(<_>::into)
-    }
-
-    pub fn add_read<Fd: AsFd>(&self, fd: &Fd, key: u64) -> Result<(), IoError> {
-        self.add(fd, Epoll::IN | Epoll::ET, key).map_err(<_>::into)
-    }
-
-    pub fn pop_event(&mut self) -> Option<Event> {
-        if self.off != self.len {
-            let ptr = unsafe { self.buf.add(self.off) };
-            self.off += 1;
-            Some(unsafe { ptr.cast::<Event>().read() })
-        } else {
-            None
+    pub fn pop(&mut self) -> Option<&epoll::Event> {
+        if self.off == self.len {
+            return None;
         }
+        let ptr = unsafe { self.buf.add(self.off) };
+        self.off += 1;
+        Some(unsafe { ptr.cast::<epoll::Event>().as_ref() })
     }
 
-    pub fn wait_buf(&mut self) -> Result<(), IoError> {
+    pub fn wait(&mut self, epoll: &Epoll) -> Result<(), sys::Error<arch::sys_epoll_wait>> {
         let buf = unsafe { slice::from_raw_parts_mut(self.buf.as_ptr().cast(), CAP) };
-        self.len = self.fd.wait(buf, -1)?;
+        self.len = epoll.wait(buf, -1)?;
         self.off = 0;
         Ok(())
-    }
-}
-
-impl ops::Deref for EpollBuf {
-    type Target = epoll::Epoll;
-
-    fn deref(&self) -> &Self::Target {
-        &self.fd
     }
 }

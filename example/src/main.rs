@@ -7,7 +7,7 @@ use genos::fd::{AsFd, RawFd};
 use seryu::os::Listener;
 
 use crate::alloc::MemoryPool;
-use crate::event::{EpollBuf, EventKind};
+use crate::event::{Event, Events};
 use crate::http::HttpTask;
 use crate::rt::Shared;
 use crate::task::{FdTable, Queue, Tasks, WakerData};
@@ -24,28 +24,31 @@ mod http;
 fn main() -> Result<(), Error> {
     alloc::init_brk();
 
-    let listener = Listener::bind_tcp([127, 0, 0, 1], 4040)?;
+    // ===== os =====
 
-    let mut epoll = EpollBuf::new_static()?;
+    let listener = Listener::bind_tcp([127, 0, 0, 1], 4040)?;
+    let epoll = Epoll::create(Epoll::CLOEXEC)?;
+
+    Event::add_with(&epoll, &listener, Event::Listener)?;
+
+    // ===== data =====
+
+    let mut mpool = MemoryPool::new()?;
     let mut tasks = Tasks::new_static();
     let mut queue = Queue::new_static();
-    let mut mpool = MemoryPool::new()?;
+    let mut events = Events::new_static();
 
     let mut shared = Shared { fds: FdTable::new_static() };
 
-    epoll.add_listener(&listener)?;
     shared.fds.insert(&listener)?;
     shared.fds.insert(&epoll)?;
     shared.setup();
 
     loop {
         // ===== Event scheduling =====
-
-        use EventKind as Ev;
-
-        while let Some(ev) = epoll.pop_event() {
-            match Ev::from_raw(ev.data) {
-                Some(Ev::Listener) => {
+        while let Some(ev) = events.pop() {
+            match Event::from_epoll(ev) {
+                Some(Event::Listener) => {
                     let socket = match listener.accept() {
                         Ok(ok) => ok,
                         Err(err) => {
@@ -58,7 +61,7 @@ fn main() -> Result<(), Error> {
                     };
                     let fd = shared.fds.insert(&socket)?;
                     WakerData::new(tasks.peek_id()).register_read(&socket);
-                    epoll.add_read(&socket, fd as u64)?;
+                    epoll.add(&socket, Epoll::IN | Epoll::ET, fd as u64)?;
 
                     let mem = mpool.alloc_page()?;
                     let task = HttpTask::new(socket, mem)?;
@@ -113,7 +116,7 @@ fn main() -> Result<(), Error> {
 
         // ===== Wait for events =====
 
-        epoll.wait_buf()?;
+        events.wait(&epoll)?;
     }
 }
 
