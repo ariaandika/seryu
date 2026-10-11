@@ -3,8 +3,8 @@ use core::task::{RawWaker, RawWakerVTable, Waker};
 
 use genos::fd::AsFd;
 
-use crate::rt::Shared;
-use crate::task::TaskId;
+use crate::shared::Global;
+use crate::task::{FdTable, TaskId};
 
 pub struct WakerData {
     id: TaskId,
@@ -27,11 +27,11 @@ impl WakerData {
     }
 
     pub fn register_read<Fd: AsFd + ?Sized>(&self, fd: &Fd) {
-        Shared::get().fds.register_read(fd, self.clone());
+        FdTable::global().register_read(fd, self.clone());
     }
 
     pub fn register_write<Fd: AsFd + ?Sized>(&self, fd: &Fd) {
-        Shared::get().fds.register_write(fd, self.clone());
+        FdTable::global().register_write(fd, self.clone());
     }
 
     /// # Safety

@@ -1,5 +1,6 @@
 #![allow(clippy::module_inception)]
 use core::fmt;
+use core::pin::pin;
 use core::task::Context;
 
 use genos::event::Epoll;
@@ -10,16 +11,18 @@ use crate::alloc::MemoryPool;
 use crate::event::{Event, Events};
 use crate::http::HttpTask;
 use crate::rt::Shared;
+use crate::shared::Global;
 use crate::task::{FdTable, Queue, Tasks, WakerData};
 
 mod alloc;
 mod io;
-mod rt;
+mod shared;
 
 mod event;
 mod task;
 
 mod http;
+mod rt;
 
 fn main() -> Result<(), Error> {
     alloc::init_brk();
@@ -28,8 +31,11 @@ fn main() -> Result<(), Error> {
 
     let listener = Listener::bind_tcp([127, 0, 0, 1], 4040)?;
     let epoll = Epoll::create(Epoll::CLOEXEC)?;
+    let mut fds = FdTable::new_static();
 
     Event::add_with(&epoll, &listener, Event::Listener)?;
+    fds.insert(&listener)?;
+    fds.insert(&epoll)?;
 
     // ===== data =====
 
@@ -38,11 +44,7 @@ fn main() -> Result<(), Error> {
     let mut queue = Queue::new_static();
     let mut events = Events::new_static();
 
-    let mut shared = Shared { fds: FdTable::new_static() };
-
-    shared.fds.insert(&listener)?;
-    shared.fds.insert(&epoll)?;
-    shared.setup();
+    pin!(Shared::new(fds)).setup();
 
     loop {
         // ===== Event scheduling =====
@@ -59,7 +61,7 @@ fn main() -> Result<(), Error> {
                             }
                         }
                     };
-                    let fd = shared.fds.insert(&socket)?;
+                    let fd = FdTable::global().insert(&socket)?;
                     WakerData::new(tasks.peek_id()).register_read(&socket);
                     epoll.add(&socket, Epoll::IN | Epoll::ET, fd as u64)?;
 
@@ -69,7 +71,7 @@ fn main() -> Result<(), Error> {
                 }
                 None => {
                     let fd = ev.data as RawFd;
-                    let prop = shared.fds.get_mut(fd);
+                    let prop = FdTable::global().get_mut(fd);
 
                     if ev.events & Epoll::IN == Epoll::IN
                         && let Some(waker) = prop.read.take()
@@ -107,7 +109,7 @@ fn main() -> Result<(), Error> {
 
             let task = tasks.remove(id).unwrap();
             epoll.delete(&task.socket)?;
-            shared.fds.remove(task.socket.as_raw_fd());
+            FdTable::global().remove(task.socket.as_raw_fd());
 
             mpool.release(task.page);
         }
