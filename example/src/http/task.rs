@@ -2,15 +2,13 @@ use core::mem::MaybeUninit;
 use core::ptr::NonNull;
 use core::task::{Context, Poll, ready};
 
-use genos::io;
 use genos::net::Socket;
 use seryu::bytes::Writer;
 
-use crate::Error;
 use crate::alloc::Page;
 use crate::http::h1::HeadersBuf;
 use crate::http::{IoBuffer, TaskPage, h1};
-use crate::task::WakerData;
+use crate::{Error, io};
 
 // ===== Task =====
 
@@ -19,14 +17,15 @@ pub struct HttpTask {
     pub socket: Socket,
     read_off: usize,
     read_buf: IoBuffer,
+    write_off: usize,
     write_buf: IoBuffer,
     headers: NonNull<HeadersBuf<'static>>,
     phase: Phase,
 }
 
 enum Phase {
-    Request,
-    Response,
+    ReadRequest,
+    WriteResponse,
     Disconnect,
 }
 
@@ -36,7 +35,16 @@ impl HttpTask {
         let read_buf = unsafe { IoBuffer::from_raw(base) };
         let write_buf = unsafe { IoBuffer::from_raw(base.add(Page::SIZE)) };
         let headers = unsafe { base.add(Page::SIZE * 2).cast() };
-        Ok(Self { page, socket, read_off: 0, read_buf, write_buf, headers, phase: Phase::Request })
+        Ok(Self {
+            page,
+            socket,
+            read_off: 0,
+            read_buf,
+            write_off: 0,
+            write_buf,
+            headers,
+            phase: Phase::ReadRequest,
+        })
     }
 }
 
@@ -50,7 +58,7 @@ impl HttpTask {
     fn poll_inner(&mut self, cx: &mut Context) -> Poll<Result<(), Error>> {
         loop {
             match self.phase {
-                Phase::Request => {
+                Phase::ReadRequest => {
                     let len = match h1::scan_request(&self.read_buf.as_slice()[self.read_off..])? {
                         0 => {
                             ready!(self.poll_read(cx))?;
@@ -68,14 +76,17 @@ impl HttpTask {
                         h1::request_handler(reqline.assume_init_ref(), headers)
                     };
                     self.read_off += len;
-                    self.phase = Phase::Response;
-                }
-                Phase::Response => {
+
+                    // response
                     let mut writer = Writer::new(self.write_buf.spare_capacity_mut());
                     h1::response_writer(&mut writer)?;
-                    io::write(&self.socket, writer.init())?;
+                    self.write_off = 0;
+                    self.phase = Phase::WriteResponse;
+                }
+                Phase::WriteResponse => {
+                    ready!(self.poll_write_all(cx)?);
+                    self.write_off = 0;
                     self.write_buf.clear();
-                    self.phase = Phase::Request;
                 }
                 Phase::Disconnect => {
                     return Poll::Ready(Ok(()));
@@ -89,26 +100,22 @@ impl HttpTask {
 
 impl HttpTask {
     fn poll_read(&mut self, cx: &mut Context) -> Poll<Result<(), Error>> {
-        match io::read(&self.socket, self.read_buf.spare_capacity_mut()) {
-            Ok(read) => {
-                if read == 0 {
-                    // read `0` means EOF, therefore disconnect
-                    self.phase = Phase::Disconnect;
-                } else {
-                    let new_len = self.read_buf.len() + read;
-                    unsafe { self.read_buf.set_len(new_len) };
-                }
-                Poll::Ready(Ok(()))
-            }
-            Err(err) => {
-                if err.code().is_retry() {
-                    // would block, register the event interest
-                    WakerData::from_waker(cx.waker()).register_read(&self.socket);
-                    Poll::Pending
-                } else {
-                    Poll::Ready(Err(err.into()))
-                }
-            }
+        let read = ready!(io::poll_read(&self.socket, self.read_buf.spare_capacity_mut(), cx))?;
+        if read == 0 {
+            // read `0` means EOF, therefore disconnect
+            self.phase = Phase::Disconnect;
+        } else {
+            let new_len = self.read_buf.len() + read;
+            unsafe { self.read_buf.set_len(new_len) };
         }
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_write_all(&mut self, cx: &mut Context) -> Poll<Result<(), Error>> {
+        while self.write_off < self.write_buf.len() {
+            let buf = &self.write_buf.as_slice()[self.write_off..];
+            self.write_off += ready!(io::poll_write(&self.socket, buf, cx))?;
+        }
+        Poll::Ready(Ok(()))
     }
 }

@@ -13,6 +13,7 @@ use crate::rt::Shared;
 use crate::task::{FdTable, Queue, Tasks, WakerData};
 
 mod alloc;
+mod io;
 mod rt;
 
 mod event;

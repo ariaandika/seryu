@@ -30,6 +30,10 @@ impl WakerData {
         Shared::get().fds.register_read(fd, self.clone());
     }
 
+    pub fn register_write<Fd: AsFd + ?Sized>(&self, fd: &Fd) {
+        Shared::get().fds.register_write(fd, self.clone());
+    }
+
     /// # Safety
     ///
     /// `self` must not be moved.

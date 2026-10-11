@@ -64,6 +64,10 @@ impl FdTable {
         self.get_mut(fd.as_raw_fd()).read = Some(waker);
     }
 
+    pub fn register_write<Fd: AsFd + ?Sized>(&mut self, fd: &Fd, waker: WakerData) {
+        self.get_mut(fd.as_raw_fd()).write = Some(waker);
+    }
+
     pub fn remove(&mut self, _fd: RawFd) {
         // currently noop
     }
