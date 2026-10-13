@@ -5,28 +5,30 @@ use crate::h1::target::Origin;
 use crate::h1::{self, Field, Fields, RequestLine, StatusLine};
 
 #[test]
-fn test_parse_line() {
-    let line = b"Host: example.com\r\n";
-    let mut reader = Reader::new(line);
-    let parsed = h1::read_line(&mut reader).unwrap();
-    assert!(!reader.has_remaining());
-    assert_eq!(parsed, b"Host: example.com");
+fn test_read_line() {
+    macro_rules! test_me {
+        ($b:literal, $line:literal) => {
+            test_me!($b, $line, b"");
+        };
+        ($b:literal, $line:literal, $rest:literal) => {
+            let mut bytes: &[u8] = $b;
+            assert_eq!(h1::read_line(&mut bytes).unwrap(), $line);
+            assert_eq!(bytes, $rest);
+        };
+    }
 
-    let line = b"Host: example.com\n";
-    let mut reader = Reader::new(line);
-    let parsed = h1::read_line(&mut reader).unwrap();
-    assert!(!reader.has_remaining());
-    assert_eq!(parsed, b"Host: example.com");
+    test_me!(b"Host: example.com\r\n", b"Host: example.com");
+    test_me!(b"H\r\n", b"H");
+    test_me!(b"\r\n", b"");
 
-    let line = b"\n";
-    let mut reader = Reader::new(line);
-    let parsed = h1::read_line(&mut reader).unwrap();
-    assert!(!reader.has_remaining());
-    assert_eq!(parsed, b"");
+    test_me!(b"Host: example.com\n", b"Host: example.com");
+    test_me!(b"H\n", b"H");
+    test_me!(b"\n", b"");
 
-    let line = "Host: example\u{80}.com\r\n";
-    let mut reader = Reader::new(line.as_bytes());
-    assert!(h1::read_line(&mut reader).is_err());
+    test_me! {
+        b"Host\x80: example.com\n",
+        b"Host", b": example.com\n"
+    };
 }
 
 #[test]
@@ -38,9 +40,7 @@ fn test_reqline() {
             assert_eq!(state.method, $m);
             assert_eq!(state.target, $t);
             assert_eq!(state.version, $v);
-            let mut writer = Writer::new(&mut buf);
-            state.serialize(&mut writer).unwrap();
-            let ser = writer.init();
+            let ser = state.serialize(&mut buf).unwrap();
             assert_eq!(&ser[..ser.len() - 2], $reqline);
         };
     }
@@ -82,15 +82,15 @@ fn test_parse_origin() {
 
 #[test]
 fn test_status_line() {
-    let state = StatusLine::parse(b"HTTP/1.1 200 OK").unwrap();
+    let status = StatusLine::parse(b"HTTP/1.1 200 OK").unwrap();
 
-    assert_eq!(state.version, b"HTTP/1.1");
-    assert_eq!(state.status, b"200");
-    assert_eq!(state.reason, b"OK");
+    assert_eq!(status.version, b"HTTP/1.1");
+    assert_eq!(status.status, b"200");
+    assert_eq!(status.reason, b"OK");
 
     let mut buf = [const { MaybeUninit::uninit() }; 32];
     let mut writer = Writer::new(&mut buf);
-    state.serialize(&mut writer).unwrap();
+    writer.write_with(|b| status.serialize(b)).unwrap();
 
     assert_eq!(writer.init(), b"HTTP/1.1 200 OK\r\n");
 }
@@ -106,8 +106,9 @@ fn test_parse_field() {
 fn test_serialize_field() {
     let mut buf = [const { MaybeUninit::uninit() }; 32];
     let mut writer = Writer::new(&mut buf);
-    let field = Field { name: b"Host", value: b"example.com" };
-    field.serialize(&mut writer).unwrap();
+    writer
+        .write_with(|b| Field { name: b"Host", value: b"example.com" }.serialize(b))
+        .unwrap();
     assert_eq!(writer.init(), b"Host: example.com\r\n");
 }
 
@@ -116,7 +117,7 @@ fn test_parse_request() {
     let message = b"GET / HTTP/1.1\r\nHost:  example.com\r\nContent-Length:127\n\n";
     let mut reader = Reader::new(message);
 
-    let line = h1::read_line(&mut reader).unwrap();
+    let line = reader.read_with(h1::read_line).unwrap();
     let reqline = RequestLine::parse(line).unwrap();
 
     assert_eq!(reqline.method, b"GET");
@@ -127,7 +128,7 @@ fn test_parse_request() {
     let mut fields = Fields::new(&mut fields);
 
     loop {
-        let line = h1::read_line(&mut reader).unwrap();
+        let line = reader.read_with(h1::read_line).unwrap();
         if line.is_empty() {
             break;
         }
@@ -159,11 +160,11 @@ fn test_serialize_request() {
     let mut buf = [const { MaybeUninit::uninit() }; 256];
     let mut writer = Writer::new(&mut buf);
 
-    reqline.serialize(&mut writer).unwrap();
+    writer.write_with(|b| reqline.serialize(b)).unwrap();
     for field in fields {
-        field.serialize(&mut writer).unwrap();
+        writer.write_with(|b| field.serialize(b)).unwrap();
     }
-    Field::serialize_eoh(&mut writer).unwrap();
+    writer.write_with(|b| Field::serialize_eoh(b)).unwrap();
 
     assert_eq!(writer.init(), b"GET / HTTP/1.1\r\nHost: example.com\r\nContent-Length: 127\r\n\r\n")
 }

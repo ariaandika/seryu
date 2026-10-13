@@ -1,27 +1,25 @@
-use core::hint;
+use crate::h1::matches;
 
-use crate::bytes::Reader;
-use crate::h1::{ParseError, matches};
-
-/// Read a CRLF delimited line.
+/// Read a delimited line.
 ///
-/// Advance `reader` to consume the line, and returns the line without its delimiter.
+/// This will search for CRLF delimiter, move the bytes pointer past the line with the delimiter,
+/// and returns that line without the delimiter.
 ///
-/// This function also accepts bare LF delimiter.
+/// This also accept bare LF delimiter.
+///
+/// Additionally, if non-ASCII byte is found, it will be treated as delimiter. This is intended to
+/// fail at the parsing phase, instead of checks for either invalid byte or insufficient byte.
 #[inline]
-pub fn read_line<'a>(reader: &mut Reader<'a>) -> Result<&'a [u8], ParseError> {
-    let Some(line) = matches::find::<b'\n'>(reader.as_bytes()) else {
-        return Err(ParseError::InsufficientBytes);
-    };
-    reader.assume_read_len(line.len());
-    let Some(&[delim]) = reader.read_chunk() else {
-        // SAFETY: `find` never returns empty bytes
-        unsafe { hint::unreachable_unchecked() }
-    };
-    if delim != b'\n' {
-        // panic!("ffa");
-        return Err(ParseError::InvalidByte);
+pub fn read_line<'a>(bytes: &mut &'a [u8]) -> Option<&'a [u8]> {
+    let line = matches::find::<b'\n'>(bytes)?;
+    unsafe {
+        // advance the bytes pointer including the delimiter
+        // SAFETY: `matches::find` always exclude the `lf` delimiter
+        *bytes = bytes.get_unchecked(line.len() + 1..);
+
+        // checks for potential CR delimiter
+        let cr = line.as_ptr().add(line.len().saturating_sub(1));
+        // SAFETY: if `line.len()` is `0`, `cr` will deref the delimiter
+        Some(line.get_unchecked(..line.len() - (*cr == b'\r') as usize))
     }
-    let suffix = line.last().copied().unwrap_or(b'0') == b'\r';
-    Ok(unsafe { line.get_unchecked(..line.len() - suffix as usize) })
 }

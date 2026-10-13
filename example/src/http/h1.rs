@@ -18,9 +18,11 @@ pub fn request_handler(reqline: &h1::RequestLine, headers: &[h1::Field]) {
 }
 
 pub fn response_writer(writer: &mut Writer) -> Result<(), Error> {
-    h1::StatusLine { version: b"HTTP/1.1", status: b"200", reason: b"OK" }.serialize(writer)?;
-    h1::Field::new(b"Content-Length", b"0").serialize(writer)?;
-    h1::Field::serialize_eoh(writer)?;
+    writer.write_with(|b| {
+        h1::StatusLine { version: b"HTTP/1.1", status: b"200", reason: b"OK" }.serialize(b)
+    })?;
+    writer.write_with(|b| h1::Field::new(b"Content-Length", b"0").serialize(b))?;
+    writer.write_with(|b| h1::Field::serialize_eoh(b))?;
     Ok(())
 }
 
@@ -33,21 +35,15 @@ pub fn scan_request(bytes: &[u8]) -> Result<u32, Error> {
         if reader.read_len() > MAX_HEADERS_SIZE {
             break;
         }
-        match h1::read_line(&mut reader) {
-            Ok(line) => {
+        match reader.read_with(h1::read_line) {
+            Some(line) => {
                 if line.is_empty() {
                     return Ok(reader.read_len() as _);
                 }
             }
-            Err(err) => {
-                return match err {
-                    h1::ParseError::InsufficientBytes => Ok(0),
-                    _ => Err(err.into()),
-                };
-            }
+            None => return Ok(0),
         }
     }
-
     Err("excessive headers".into())
 }
 
@@ -57,11 +53,15 @@ pub fn parse_request<'a>(
     headers: &mut HeadersBuf<'a>,
 ) -> Result<u32, Error> {
     let mut reader = Reader::new(bytes);
-    let line = h1::read_line(&mut reader)?;
+    let Some(line) = reader.read_with(h1::read_line) else {
+        return Err("insufficient bytes".into());
+    };
     h1::parse_reqline(line, reqline)?;
     let mut header_len = 0;
     while let Some(header_mut) = headers.get_mut(header_len as usize) {
-        let line = h1::read_line(&mut reader)?;
+        let Some(line) = reader.read_with(h1::read_line) else {
+            return Err("insufficient bytes".into());
+        };
         if line.is_empty() {
             break;
         }

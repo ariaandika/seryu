@@ -55,7 +55,7 @@ impl<'a> Reader<'a> {
 
     /// Assume `count` bytes has been read.
     #[inline]
-    pub fn assume_read_len(&mut self, count: usize) {
+    pub fn advance_read(&mut self, count: usize) {
         let count = self.remaining().min(count);
         self.bytes = unsafe {
             slice::from_raw_parts(self.bytes.as_ptr().add(count), self.remaining() - count)
@@ -75,5 +75,21 @@ impl<'a> Reader<'a> {
         self.bytes = unsafe { slice::from_raw_parts(base.add(N), remain) };
         self.read += N;
         unsafe { Some(base.cast::<[u8; N]>().as_ref_unchecked()) }
+    }
+
+    #[inline]
+    pub fn read_with<F>(&mut self, f: F) -> Option<&'a [u8]>
+    where
+        F: FnOnce(&mut &'a [u8]) -> Option<&'a [u8]>,
+    {
+        let mut bytes = self.bytes;
+        match f(&mut bytes) {
+            Some(res) => {
+                let read = unsafe { bytes.as_ptr().offset_from_unsigned(res.as_ptr()) };
+                self.advance_read(read);
+                Some(res)
+            }
+            None => None,
+        }
     }
 }

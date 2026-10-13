@@ -1,6 +1,6 @@
 pub use buf::{Buffer, Capacity};
 pub use slab::Slab;
-pub use error::OutOfMemory;
+pub use error::{OutOfCapacity, OutOfMemory};
 
 mod error;
 

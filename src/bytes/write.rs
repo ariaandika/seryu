@@ -1,7 +1,7 @@
 use core::mem::MaybeUninit;
 use core::slice;
 
-use crate::bytes::InsufficientBuffer;
+use crate::alloc::OutOfCapacity;
 
 /// Bytes writing helper.
 #[derive(Debug)]
@@ -115,9 +115,9 @@ impl<'a> Writer<'a> {
     ///
     /// Returns an error if the remaining capacity is not enough to contains the bytes.
     #[inline]
-    pub const fn write(&mut self, bytes: &[u8]) -> Result<(), InsufficientBuffer> {
+    pub const fn write(&mut self, bytes: &[u8]) -> Result<(), OutOfCapacity> {
         if bytes.len() > self.remaining() {
-            return Err(InsufficientBuffer);
+            return Err(OutOfCapacity);
         }
         // SAFETY: `bytes.len() <= self.remaining()`
         unsafe { self.write_unchecked(bytes) };
@@ -135,5 +135,19 @@ impl<'a> Writer<'a> {
         // SAFETY: `len <= self.remaining()`
         unsafe { self.write_inner(bytes.as_ptr(), len) };
         len
+    }
+
+    #[inline]
+    pub fn write_with<F>(&mut self, f: F) -> Result<&'a mut [u8], OutOfCapacity>
+    where
+        F: FnOnce(&'a mut [MaybeUninit<u8>]) -> Result<&'a mut [u8], OutOfCapacity>,
+    {
+        match f(unsafe { slice::from_raw_parts_mut(self.bytes.as_mut_ptr(), self.bytes.len()) }) {
+            Ok(res) => {
+                unsafe { self.assume_init_len(res.len()) };
+                Ok(res)
+            }
+            Err(err) => Err(err),
+        }
     }
 }

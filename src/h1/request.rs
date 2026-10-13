@@ -1,6 +1,6 @@
 use core::mem::MaybeUninit;
 
-use crate::bytes::{InsufficientBuffer, Writer};
+use crate::alloc::OutOfCapacity;
 use crate::fmt;
 use crate::h1::ParseError;
 
@@ -52,19 +52,25 @@ impl<'a> RequestLine<'a> {
     ///
     /// See the struct documentation for more details on the syntax.
     #[inline]
-    pub const fn serialize(&self, writer: &mut Writer) -> Result<(), InsufficientBuffer> {
-        if writer.remaining() < self.serialize_len() {
-            return Err(InsufficientBuffer);
-        }
+    pub fn serialize<'b>(
+        &self,
+        bytes: &'b mut [MaybeUninit<u8>],
+    ) -> Result<&'b mut [u8], OutOfCapacity> {
+        let Some(bytes) = bytes.get_mut(..self.serialize_len()) else {
+            return Err(OutOfCapacity);
+        };
         unsafe {
-            writer.write_unchecked(self.method);
-            writer.write_unchecked(b" ");
-            writer.write_unchecked(self.target);
-            writer.write_unchecked(b" ");
-            writer.write_unchecked(self.version);
-            writer.write_unchecked(b"\r\n");
+            let mut ptr = bytes.as_mut_ptr().cast::<u8>();
+            macro_rules! write {
+                ($($v:expr),*) => {$(
+                    ptr.copy_from_nonoverlapping($v.as_ptr(), $v.len());
+                    ptr = ptr.add($v.len());
+                )*};
+            }
+            write!(self.method, b" ", self.target, b" ", self.version);
+            ptr.copy_from_nonoverlapping(b"\r\n".as_ptr(), 2);
+            Ok(bytes.assume_init_mut())
         }
-        Ok(())
     }
 }
 

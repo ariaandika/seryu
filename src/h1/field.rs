@@ -1,7 +1,7 @@
 use core::mem::MaybeUninit;
 use core::slice;
 
-use crate::bytes::{InsufficientBuffer, Writer};
+use crate::alloc::OutOfCapacity;
 use crate::fmt;
 use crate::h1::error::{ParseError, Result};
 use crate::h1::matches;
@@ -50,23 +50,34 @@ impl<'a> Field<'a> {
 
     /// Serialize field to given writer.
     #[inline]
-    pub const fn serialize(&self, writer: &mut Writer) -> Result<(), InsufficientBuffer> {
-        if writer.remaining() < self.serialize_len() {
-            return Err(InsufficientBuffer);
-        }
+    pub fn serialize<'b>(
+        &self,
+        bytes: &'b mut [MaybeUninit<u8>],
+    ) -> Result<&'b mut [u8], OutOfCapacity> {
+        let Some(bytes) = bytes.get_mut(..self.serialize_len()) else {
+            return Err(OutOfCapacity);
+        };
         unsafe {
-            writer.write_unchecked(self.name);
-            writer.write_unchecked(b": ");
-            writer.write_unchecked(self.value);
-            writer.write_unchecked(b"\r\n");
+            let mut ptr = bytes.as_mut_ptr().cast::<u8>();
+            macro_rules! write {
+                ($($v:expr),*) => {$(
+                    ptr.copy_from_nonoverlapping($v.as_ptr(), $v.len());
+                    ptr = ptr.add($v.len());
+                )*};
+            }
+            write!(self.name, b": ", self.value);
+            ptr.copy_from_nonoverlapping(b"\r\n".as_ptr(), 2);
+            Ok(bytes.assume_init_mut())
         }
-        Ok(())
     }
 
     /// Serialize end of header fields (`\r\n`).
     #[inline]
-    pub const fn serialize_eoh(writer: &mut Writer) -> Result<(), InsufficientBuffer> {
-        writer.write(b"\r\n")
+    pub fn serialize_eoh(bytes: &mut [MaybeUninit<u8>]) -> Result<&mut [u8], OutOfCapacity> {
+        let Some(bytes) = bytes.first_chunk_mut::<2>() else {
+            return Err(OutOfCapacity);
+        };
+        Ok(bytes.write_copy_of_slice(b"\r\n"))
     }
 }
 
