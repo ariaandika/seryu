@@ -1,3 +1,5 @@
+use core::slice::from_raw_parts;
+
 /// 128 lookup table
 ///
 /// The input byte will be masked, caller must checks MSB themself.
@@ -62,16 +64,46 @@ pub const fn unreserved(byte: u8) -> bool {
 ///            / "*" / "+" / "," / ";" / "="
 /// ```
 pub const fn sub_delims(byte: u8) -> bool {
-    matches!(byte, |b'!'| b'$'
-        | b'&'
-        | b'\''
-        | b'('
-        | b')'
-        | b'*'
-        | b'+'
-        | b','
-        | b';'
-        | b'=')
+    matches!(byte, |b'!'| b'$' | b'&' | b'\'' | b'(' | b')' | b'*' | b'+' | b',' | b';' | b'=')
+}
+
+// ===== find =====
+
+/// Returns nul terminated line.
+pub const fn find_nul(mut bytes: &[u8]) -> Option<&[u8]> {
+    const BLOCK: usize = size_of::<usize>();
+    const MSB: usize = usize::from_ne_bytes([0b1000_0000; BLOCK]);
+    const LSB: usize = usize::from_ne_bytes([0b0000_0001; BLOCK]);
+
+    let base = bytes.as_ptr();
+
+    while let Some((chunk, rest)) = bytes.split_first_chunk::<BLOCK>() {
+        let block = usize::from_ne_bytes(*chunk);
+        let result = block.wrapping_sub(LSB) & !block & MSB;
+        if result != 0 {
+            unsafe {
+                let nth = (result.trailing_zeros() / 8) as usize;
+                let end_ptr = bytes.as_ptr().add(nth);
+                let len = end_ptr.offset_from_unsigned(base);
+                return Some(from_raw_parts(base, len));
+            }
+        }
+        bytes = rest;
+    }
+
+    loop {
+        let [byte, rest @ ..] = bytes else {
+            return None;
+        };
+        if *byte == 0 {
+            unsafe {
+                let end_ptr = bytes.as_ptr();
+                let len = end_ptr.offset_from_unsigned(base);
+                return Some(from_raw_parts(base, len));
+            }
+        }
+        bytes = rest;
+    }
 }
 
 // ===== hash =====
