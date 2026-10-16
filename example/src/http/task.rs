@@ -3,22 +3,35 @@ use core::ptr::NonNull;
 use core::task::{Context, Poll, ready};
 
 use genos::net::Socket;
-use seryu::bytes::Writer;
+use seryu::h1;
 
+use crate::Error;
 use crate::alloc::Page;
-use crate::http::h1::HeadersBuf;
-use crate::http::{IoBuffer, TaskPage, h1};
-use crate::{Error, io};
+use crate::http::read::{self, ReadBuf};
+use crate::http::write::{self, WriteBuf};
+
+// ===== Handler =====
+
+pub fn request_handler(reqline: &h1::RequestLine, headers: &[h1::Field]) {
+    println!("{reqline:?}");
+    for header in headers {
+        println!("{header:?}");
+    }
+}
 
 // ===== Task =====
+
+pub type HeadersBuf<'a> = [MaybeUninit<h1::Field<'a>>; MAX_HEADERS as usize];
+pub type TaskPage = Page<4>;
+
+const MAX_HEADERS: u32 = 24;
+const MAX_HEADERS_SIZE: usize = 4096;
 
 pub struct HttpTask {
     pub page: TaskPage,
     pub socket: Socket,
-    read_off: usize,
-    read_buf: IoBuffer,
-    write_off: usize,
-    write_buf: IoBuffer,
+    read_buf: ReadBuf,
+    write_buf: WriteBuf,
     headers: NonNull<HeadersBuf<'static>>,
     phase: Phase,
 }
@@ -32,19 +45,10 @@ enum Phase {
 impl HttpTask {
     pub fn new(socket: Socket, page: TaskPage) -> Result<Self, Error> {
         let base = page.as_ptr();
-        let read_buf = unsafe { IoBuffer::from_raw(base) };
-        let write_buf = unsafe { IoBuffer::from_raw(base.add(Page::SIZE)) };
+        let read_buf = unsafe { ReadBuf::from_raw(base) };
+        let write_buf = unsafe { WriteBuf::from_raw(base.add(Page::SIZE)) };
         let headers = unsafe { base.add(Page::SIZE * 2).cast() };
-        Ok(Self {
-            page,
-            socket,
-            read_off: 0,
-            read_buf,
-            write_off: 0,
-            write_buf,
-            headers,
-            phase: Phase::ReadRequest,
-        })
+        Ok(Self { page, socket, read_buf, write_buf, headers, phase: Phase::ReadRequest })
     }
 }
 
@@ -52,44 +56,40 @@ impl HttpTask {
 
 impl HttpTask {
     pub fn poll(&mut self, cx: &mut Context) -> Poll<()> {
-        self.poll_inner(cx).map(drop)
+        self.poll_inner(cx).map(|res| {
+            if res.is_err() {
+                self.phase = Phase::Disconnect;
+            }
+        })
     }
 
     fn poll_inner(&mut self, cx: &mut Context) -> Poll<Result<(), Error>> {
         loop {
             match self.phase {
                 Phase::ReadRequest => {
-                    let len = match h1::scan_request(&self.read_buf.as_slice()[self.read_off..])? {
-                        0 => {
-                            ready!(self.poll_read(cx))?;
-                            continue;
+                    let Some(request) = self.read_buf.read_request() else {
+                        let is_eof = ready!(self.read_buf.poll_read_fd(&self.socket, cx))?;
+                        if is_eof {
+                            self.phase = Phase::Disconnect;
                         }
-                        len => len as usize,
+                        if self.read_buf.len() > MAX_HEADERS_SIZE {
+                            return Poll::Ready(Err("excessive headers".into()));
+                        }
+                        continue;
                     };
-                    let request = &self.read_buf.as_slice()[self.read_off..][..len];
                     let mut reqline = MaybeUninit::uninit();
                     let headers = unsafe { self.headers.cast().as_mut() };
-                    let header_len = h1::parse_request(request, &mut reqline, headers)?;
-
-                    unsafe {
-                        let headers = headers[..header_len as usize].assume_init_ref();
-                        h1::request_handler(reqline.assume_init_ref(), headers)
-                    };
-                    self.read_off += len;
+                    let headers = read::parse_request(request, &mut reqline, headers)?;
+                    let reqline = unsafe { reqline.assume_init_ref() };
+                    request_handler(reqline, headers);
 
                     // response
 
-                    let mut writer = Writer::new(self.write_buf.spare_capacity_mut());
-                    h1::response_writer(&mut writer)?;
-                    let write = writer.write_len();
-                    unsafe { self.write_buf.set_len(write) };
-
-                    self.write_off = 0;
+                    write::response_writer(&mut self.write_buf)?;
                     self.phase = Phase::WriteResponse;
                 }
                 Phase::WriteResponse => {
-                    ready!(self.poll_write_all(cx)?);
-                    self.write_off = 0;
+                    ready!(self.write_buf.poll_flush(&self.socket, cx)?);
                     self.write_buf.clear();
                     self.phase = Phase::ReadRequest;
                 }
@@ -98,29 +98,5 @@ impl HttpTask {
                 }
             }
         }
-    }
-}
-
-// ===== poll underlying io =====
-
-impl HttpTask {
-    fn poll_read(&mut self, cx: &mut Context) -> Poll<Result<(), Error>> {
-        let read = ready!(io::poll_read(&self.socket, self.read_buf.spare_capacity_mut(), cx))?;
-        if read == 0 {
-            // read `0` means EOF, therefore disconnect
-            self.phase = Phase::Disconnect;
-        } else {
-            let new_len = self.read_buf.len() + read;
-            unsafe { self.read_buf.set_len(new_len) };
-        }
-        Poll::Ready(Ok(()))
-    }
-
-    fn poll_write_all(&mut self, cx: &mut Context) -> Poll<Result<(), Error>> {
-        while self.write_off < self.write_buf.len() {
-            let buf = &self.write_buf.as_slice()[self.write_off..];
-            self.write_off += ready!(io::poll_write(&self.socket, buf, cx))?;
-        }
-        Poll::Ready(Ok(()))
     }
 }
