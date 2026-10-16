@@ -1,8 +1,6 @@
 //! Postgres frontend messages.
-use core::mem::MaybeUninit;
-use core::slice;
-
 use crate::alloc::OutOfCapacity;
+use crate::bytes::BufMut;
 use crate::postgres::{Encode, Encoder, Primitive};
 
 // ===== Query =====
@@ -49,7 +47,7 @@ pub struct Startup<'a> {
 
 impl<'a> Startup<'a> {
     /// Encode startup message to given buffer.
-    pub fn encode(&self, buf: &'a mut [MaybeUninit<u8>]) -> Result<&'a mut [u8], OutOfCapacity> {
+    pub fn encode<B: BufMut>(&self, mut buf: B) -> Result<(), OutOfCapacity> {
         let len = size_of::<u32>()
             + size_of::<u32>()
             + 7 // "user" + nul + `user` nul + message nul
@@ -57,7 +55,7 @@ impl<'a> Startup<'a> {
             + self.database.map(|e| "database".len() + e.len() + 2).unwrap_or(0)
             + self.replication.map(|s| "replication".len() + s.len() + 2).unwrap_or(0);
 
-        if buf.len() < len {
+        if buf.spare_mut().len() < len {
             return Err(OutOfCapacity);
         }
 
@@ -69,7 +67,7 @@ impl<'a> Startup<'a> {
                 u32::from_be_bytes([major[0], major[1], minor[0], minor[1]])
             };
 
-            let mut enc = Encoder::new(buf.as_mut_ptr());
+            let mut enc = Encoder::new(buf.spare_mut().as_mut_ptr());
 
             enc.encode(len as u32);
             enc.encode(VERSION);
@@ -97,7 +95,8 @@ impl<'a> Startup<'a> {
             // A zero byte is required as a terminator after the last name/value pair.
             enc.encode(0u8);
 
-            Ok(slice::from_raw_parts_mut(buf.as_mut_ptr().cast(), len))
+            buf.advance_mut(len);
+            Ok(())
         }
     }
 }

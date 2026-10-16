@@ -1,6 +1,7 @@
 use core::mem::MaybeUninit;
 
 use crate::alloc::OutOfCapacity;
+use crate::bytes::BufMut;
 use crate::fmt;
 use crate::h1::{ParseError, matches};
 
@@ -64,25 +65,19 @@ impl<'a> StatusLine<'a> {
     ///
     /// See the struct documentation for more details on the syntax.
     #[inline]
-    pub fn serialize<'b>(
-        &self,
-        bytes: &'b mut [MaybeUninit<u8>],
-    ) -> Result<&'b mut [u8], OutOfCapacity> {
-        let Some(bytes) = bytes.get_mut(..self.serialize_len()) else {
+    pub fn serialize<B: BufMut>(&self, mut bytes: B) -> Result<(), OutOfCapacity> {
+        if bytes.spare_mut().len() < self.serialize_len() {
             return Err(OutOfCapacity);
-        };
-        unsafe {
-            let mut ptr = bytes.as_mut_ptr().cast::<u8>();
-            macro_rules! write {
-                ($($v:expr),*) => {$(
-                    ptr.copy_from_nonoverlapping($v.as_ptr(), $v.len());
-                    ptr = ptr.add($v.len());
-                )*};
-            }
-            write!(self.version, b" ", self.status, b" ", self.reason);
-            ptr.copy_from_nonoverlapping(b"\r\n".as_ptr(), 2);
-            Ok(bytes.assume_init_mut())
         }
+        unsafe {
+            bytes.write_unchecked(self.version);
+            bytes.write_unchecked(b" ");
+            bytes.write_unchecked(self.status);
+            bytes.write_unchecked(b" ");
+            bytes.write_unchecked(self.reason);
+            bytes.write_unchecked(b"\r\n");
+        }
+        Ok(())
     }
 }
 

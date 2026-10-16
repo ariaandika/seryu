@@ -1,6 +1,6 @@
 //! Types for working with raw bytes.
-pub use read::Reader;
-pub use write::Writer;
+pub use buf::Buf;
+pub use buf_mut::BufMut;
 
-mod read;
-mod write;
+mod buf;
+mod buf_mut;

@@ -5,7 +5,7 @@ use std::mem::MaybeUninit;
 
 use genos::fd::AsFd;
 use genos::{arch, sys};
-use seryu::bytes::Writer;
+use seryu::bytes::BufMut;
 use seryu::h1;
 
 use crate::alloc::Page;
@@ -58,16 +58,24 @@ impl WriteBuf {
     }
 }
 
+impl BufMut for &mut WriteBuf {
+    #[inline]
+    fn spare_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+        self.spare()
+    }
+
+    #[inline]
+    unsafe fn advance_mut(&mut self, count: usize) {
+        unsafe { self.assume_init_len(count) };
+    }
+}
+
 // ===== h1 =====
 
 pub fn response_writer(write_buf: &mut WriteBuf) -> Result<(), Error> {
-    let mut writer = Writer::new(write_buf.spare());
-    writer.write_with(|b| {
-        h1::StatusLine { version: b"HTTP/1.1", status: b"200", reason: b"OK" }.serialize(b)
-    })?;
-    writer.write_with(|b| h1::Field::new(b"Content-Length", b"0").serialize(b))?;
-    writer.write_with(|b| h1::Field::serialize_eoh(b))?;
-    let write = writer.write_len();
-    unsafe { write_buf.assume_init_len(write) };
+    h1::StatusLine { version: b"HTTP/1.1", status: b"200", reason: b"OK" }
+        .serialize(&mut *write_buf)?;
+    h1::Field::new(b"Content-Length", b"0").serialize(&mut *write_buf)?;
+    h1::Field::serialize_eoh(&mut *write_buf)?;
     Ok(())
 }

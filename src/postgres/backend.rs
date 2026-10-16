@@ -1,6 +1,7 @@
 //! Postgres backend messages.
 use core::ffi::CStr;
 
+use crate::bytes::Buf;
 use crate::postgres::row::Rows;
 use crate::postgres::{Column, Columns, Decode, DecodeError, Decoder, Row};
 use crate::{fmt, matches};
@@ -9,12 +10,12 @@ use crate::{fmt, matches};
 
 /// Read one message.
 #[inline]
-pub fn read_message<'a>(bytes: &mut &'a [u8]) -> Option<&'a [u8]> {
+pub fn read_message<'a, B: Buf<'a>>(mut bytes: B) -> Option<&'a [u8]> {
     const MSGTYPE_SIZE: u32 = size_of::<u8>() as u32;
-    let len_bytes = bytes.first_chunk::<5>()?.last_chunk::<4>()?;
+    let len_bytes = bytes.as_bytes().first_chunk::<5>()?.last_chunk::<4>()?;
     let len = u32::from_be_bytes(*len_bytes) + MSGTYPE_SIZE;
-    let (message, rest) = bytes.split_at_checked(len as usize)?;
-    *bytes = rest;
+    let message = bytes.as_bytes().get(..len as usize)?;
+    bytes.advance(message.len());
     Some(message)
 }
 

@@ -5,7 +5,6 @@ use core::{fmt, slice};
 
 use genos::fd::AsFd;
 use genos::{arch, sys};
-use seryu::bytes::Reader;
 use seryu::h1;
 
 use crate::alloc::Page;
@@ -70,18 +69,17 @@ pub type HeadersBuf<'a> = [MaybeUninit<h1::Field<'a>>; MAX_HEADERS as usize];
 const MAX_HEADERS: u32 = 24;
 
 pub fn parse_request<'a, 'h>(
-    bytes: &'a [u8],
+    mut bytes: &'a [u8],
     reqline: &mut MaybeUninit<h1::RequestLine<'a>>,
     headers: &'h mut HeadersBuf<'a>,
 ) -> Result<&'h [h1::Field<'a>], Error> {
-    let mut reader = Reader::new(bytes);
-    let Some(line) = reader.read_with(h1::read_line) else {
+    let Some(line) = h1::read_line(&mut bytes) else {
         return Err(h1::ParseError::InsufficientBytes.into());
     };
     h1::parse_reqline(line, reqline)?;
     let mut header_len = 0;
     loop {
-        let Some(line) = reader.read_with(h1::read_line) else {
+        let Some(line) = h1::read_line(&mut bytes) else {
             return Err(h1::ParseError::InsufficientBytes.into());
         };
         if line.is_empty() {
