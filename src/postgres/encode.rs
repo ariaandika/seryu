@@ -1,7 +1,7 @@
 use core::fmt;
-use core::mem::MaybeUninit;
 
 use crate::alloc::OutOfCapacity;
+use crate::bytes::BufMut;
 use crate::postgres::primitive::Primitive;
 
 // ===== Encode =====
@@ -26,27 +26,25 @@ pub trait Encode: fmt::Debug {
     /// `buf` must be able to contains at least `size + 5`, where `size` is the return value of
     /// [`Encode::size`].
     #[inline]
-    fn encode_msg<'a>(
-        &self,
-        buf: &'a mut [MaybeUninit<u8>],
-    ) -> Result<&'a mut [u8], OutOfCapacity> {
+    fn encode_msg<B: BufMut>(&self, mut buf: B) -> Result<(), OutOfCapacity> {
         const MSGTYPE_SIZE: usize = size_of::<u8>();
         const LENGTH_SIZE: usize = size_of::<u32>();
         const PREFIX: usize = MSGTYPE_SIZE + LENGTH_SIZE;
 
         let size = self.size();
+        let total_size = PREFIX + size;
 
-        let Some(buf) = buf.get_mut(..PREFIX + size) else {
+        let Some(spare) = buf.spare_mut().get_mut(..total_size) else {
             return Err(OutOfCapacity);
         };
+        let mut enc = Encoder::new(spare.as_mut_ptr());
 
         unsafe {
-            let mut enc = Encoder::new(buf.as_mut_ptr());
+            buf.advance_mut(total_size);
             enc.encode(Self::MSGTYPE);
             enc.encode((LENGTH_SIZE + size) as u32);
             self.encode_raw(enc.as_mut_ptr());
-
-            Ok(buf.assume_init_mut())
+            Ok(())
         }
     }
 }
