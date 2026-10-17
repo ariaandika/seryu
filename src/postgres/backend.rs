@@ -87,9 +87,25 @@ impl AuthenticationKind {
     /// Returns `true` if the authentication kind is [`Ok`].
     ///
     /// [`Ok`]: AuthenticationKind::Ok
-    #[must_use]
+    #[inline]
     pub fn is_ok(&self) -> bool {
         matches!(self, Self::Ok)
+    }
+
+    fn from_raw(raw: u32) -> Option<Self> {
+        match raw {
+            0 => Some(Self::Ok),
+            2 => Some(Self::KerberosV5),
+            3 => Some(Self::CleartextPassword),
+            5 => Some(Self::MD5Password),
+            7 => Some(Self::GSS),
+            8 => Some(Self::GSSContinue),
+            9 => Some(Self::SSPI),
+            10 => Some(Self::SASL),
+            11 => Some(Self::SASLContinue),
+            12 => Some(Self::SASLFinal),
+            _ => None,
+        }
     }
 }
 
@@ -103,23 +119,10 @@ pub struct Authentication {
 impl Authentication {
     /// Returns the authentication response kind.
     ///
-    /// Returns `None` if authentication response is unknown.
+    /// Returns `None` if authentication response kind is unknown.
     #[inline]
     pub fn kind(&self) -> Option<AuthenticationKind> {
-        use AuthenticationKind as K;
-        match self.kind {
-            0 => Some(K::Ok),
-            2 => Some(K::KerberosV5),
-            3 => Some(K::CleartextPassword),
-            5 => Some(K::MD5Password),
-            7 => Some(K::GSS),
-            8 => Some(K::GSSContinue),
-            9 => Some(K::SSPI),
-            10 => Some(K::SASL),
-            11 => Some(K::SASLContinue),
-            12 => Some(K::SASLFinal),
-            _ => None,
-        }
+        AuthenticationKind::from_raw(self.kind)
     }
 }
 
@@ -135,16 +138,37 @@ impl Decode<'_> for Authentication {
 
 /// Successful authentication request.
 #[derive(Debug)]
-pub struct AuthenticationOk {
-    // success: 0,
-}
+pub struct AuthenticationOk;
 
 impl Decode<'_> for AuthenticationOk {
     const MSGTYPE: u8 = b'R';
 
     #[inline]
     fn decode(body: &[u8]) -> Result<Self, DecodeError> {
-        if Decoder::once::<u32, _>(body)? == 0 { Ok(Self {}) } else { Err(DecodeError::Invalid) }
+        if Decoder::once::<u32, _>(body)? == AuthenticationKind::Ok as u32 {
+            Ok(Self)
+        } else {
+            Err(DecodeError::Invalid)
+        }
+    }
+}
+
+/// SASL authentication.
+///
+/// Note that this may be used as `AuthenticationSASLContinue` and `AuthenticationSASLFinal`.
+#[derive(Debug)]
+pub struct AuthenticationSASL<'a> {
+    pub data: &'a [u8],
+}
+
+impl<'a> Decode<'a> for AuthenticationSASL<'a> {
+    const MSGTYPE: u8 = b'R';
+
+    #[inline]
+    fn decode(body: &'a [u8]) -> Result<Self, DecodeError> {
+        let mut dec = Decoder::new(body);
+        let _ = dec.decode_sized::<u32, _>()?;
+        Ok(Self { data: dec.remaining() })
     }
 }
 

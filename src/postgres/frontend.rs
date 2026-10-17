@@ -1,11 +1,13 @@
 //! Postgres frontend messages.
+use core::ffi::CStr;
+
 use crate::alloc::OutOfCapacity;
 use crate::bytes::BufMut;
 use crate::postgres::{Encode, Encoder, Primitive};
 
 // ===== Query =====
 
-/// Identifies the message as a simple query
+/// Identifies the message as a simple query.
 #[derive(Debug)]
 pub struct Query<'a> {
     /// the query string itself
@@ -23,6 +25,61 @@ impl Encode for Query<'_> {
     #[inline]
     unsafe fn encode_raw(&self, ptr: *mut u8) {
         unsafe { Encoder::once(ptr, self.sql) };
+    }
+}
+
+// ===== SASLInitialResponse =====
+
+/// Initial SASL response.
+#[derive(Debug)]
+pub struct SASLInitialResponse<'a> {
+    /// Name of the SASL authentication mechanism that the client selected.
+    pub name: &'a CStr,
+    /// Length of SASL mechanism specific "Initial Client Response" that follows, or -1 if there is
+    /// no Initial Response.
+    pub length: u32,
+    /// SASL mechanism specific "Initial Response".
+    pub init_response: &'a [u8],
+}
+
+impl Encode for SASLInitialResponse<'_> {
+    const MSGTYPE: u8 = b'p';
+
+    #[inline]
+    fn size(&self) -> usize {
+        self.name.size() + self.length.size() + self.init_response.size()
+    }
+
+    #[inline]
+    unsafe fn encode_raw(&self, ptr: *mut u8) {
+        let mut enc = Encoder::new(ptr);
+        unsafe {
+            enc.encode(self.name);
+            enc.encode(self.length);
+            enc.encode(self.init_response);
+        }
+    }
+}
+
+// ===== SASLResponse =====
+
+/// SASL response.
+#[derive(Debug)]
+pub struct SASLResponse<'a> {
+    pub data: &'a [u8],
+}
+
+impl Encode for SASLResponse<'_> {
+    const MSGTYPE: u8 = b'p';
+
+    #[inline]
+    fn size(&self) -> usize {
+        self.data.size()
+    }
+
+    #[inline]
+    unsafe fn encode_raw(&self, ptr: *mut u8) {
+        unsafe { Encoder::once(ptr, self.data) };
     }
 }
 

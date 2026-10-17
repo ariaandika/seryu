@@ -75,3 +75,13 @@ impl Primitive for &CStr {
         unsafe { ptr.copy_from_nonoverlapping(me.as_ptr(), me.len()) };
     }
 }
+
+impl Primitive for &[u8] {
+    fn size(&self) -> usize {
+        self.len()
+    }
+
+    unsafe fn write(self, ptr: *mut u8) {
+        unsafe { ptr.copy_from_nonoverlapping(self.as_ptr(), self.len()) };
+    }
+}
