@@ -22,6 +22,7 @@ mod event;
 mod task;
 
 mod http;
+mod pg;
 mod rt;
 
 fn main() -> Result<(), Error> {
@@ -29,6 +30,7 @@ fn main() -> Result<(), Error> {
 
     // ===== os =====
 
+    let _ = pg::connect();
     let listener = Listener::bind_tcp([127, 0, 0, 1], 4040)?;
     let epoll = Epoll::create(Epoll::CLOEXEC)?;
     let mut fds = FdTable::new_static();
