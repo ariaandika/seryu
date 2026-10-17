@@ -45,7 +45,9 @@ msgtype! {
     CommandComplete,
     DataRow,
     ErrorResponse,
+    EmptyQueryResponse,
     BackendKeyData,
+    NoticeResponse,
     Authentication,
     ParameterStatus,
     RowDescription,
@@ -207,6 +209,76 @@ impl<'a> Decode<'a> for DataRow<'a> {
     }
 }
 
+// ===== EmptyQueryResponse =====
+
+/// Response to an empty query string.
+///
+/// This substitutes for [`CommandComplete`].
+#[derive(Debug)]
+pub struct EmptyQueryResponse;
+
+impl Decode<'_> for EmptyQueryResponse {
+    const MSGTYPE: u8 = b'I';
+
+    #[inline]
+    fn decode(_: &[u8]) -> Result<Self, DecodeError> {
+        Ok(Self)
+    }
+}
+
+// ===== ErrorResponse =====
+
+/// Error response.
+pub struct ErrorResponse<'a> {
+    body: &'a [u8],
+}
+
+impl<'a> Decode<'a> for ErrorResponse<'a> {
+    const MSGTYPE: u8 = b'E';
+
+    #[inline]
+    fn decode(body: &'a [u8]) -> Result<Self, DecodeError> {
+        Ok(Self { body })
+    }
+}
+
+// ===== NoticeResponse =====
+
+/// Notice response.
+pub struct NoticeResponse<'a> {
+    body: &'a [u8],
+}
+
+impl<'a> Decode<'a> for NoticeResponse<'a> {
+    const MSGTYPE: u8 = b'N';
+
+    #[inline]
+    fn decode(body: &'a [u8]) -> Result<Self, DecodeError> {
+        Ok(Self { body })
+    }
+}
+
+// ===== ReadyForQuery  =====
+
+/// Backend is ready for a new query cycle.
+#[derive(Debug)]
+pub struct ReadyForQuery {
+    /// Current backend transaction status indicator.
+    ///
+    /// Possible values are 'I' if idle (not in a transaction block); 'T' if in a transaction block;
+    /// or 'E' if in a failed transaction block (queries will be rejected until block is ended).
+    pub status: u8,
+}
+
+impl Decode<'_> for ReadyForQuery {
+    const MSGTYPE: u8 = b'Z';
+
+    #[inline]
+    fn decode(body: &[u8]) -> Result<Self, DecodeError> {
+        Decoder::once(body).map(|status| Self { status })
+    }
+}
+
 // ===== RowDescription =====
 
 /// Row description message.
@@ -251,107 +323,92 @@ impl<'a> Decode<'a> for RowDescription<'a> {
     }
 }
 
-// ===== ErrorResponse =====
-
-/// Error response.
-pub struct ErrorResponse<'a> {
-    body: &'a [u8],
-}
-
-impl<'a> Decode<'a> for ErrorResponse<'a> {
-    const MSGTYPE: u8 = b'E';
-
-    #[inline]
-    fn decode(body: &'a [u8]) -> Result<Self, DecodeError> {
-        Ok(Self { body })
-    }
-}
-
-// ===== ReadyForQuery  =====
-
-/// Backend is ready for a new query cycle.
-#[derive(Debug)]
-pub struct ReadyForQuery {
-    /// Current backend transaction status indicator.
-    ///
-    /// Possible values are 'I' if idle (not in a transaction block); 'T' if in a transaction block;
-    /// or 'E' if in a failed transaction block (queries will be rejected until block is ended).
-    pub status: u8,
-}
-
-impl Decode<'_> for ReadyForQuery {
-    const MSGTYPE: u8 = b'Z';
-
-    #[inline]
-    fn decode(body: &[u8]) -> Result<Self, DecodeError> {
-        Decoder::once(body).map(|status| Self { status })
-    }
-}
-
-// ===== Error =====
+// ===== Error and Notice =====
 
 impl<'a> fmt::Display for ErrorResponse<'a> {
+    #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut bytes = self.body;
-        while let Some((ty, rest)) = bytes.split_first()
-            && let Some((cstr, rest)) =
-                matches::find_nul(rest).and_then(|b| rest.split_at_checked(b.len() + 1))
-        {
-            bytes = rest;
-            if *ty != b'M' {
-                continue;
-            }
-            let Some((_, s)) = cstr.split_last() else {
-                break;
-            };
-            return match str::from_utf8(s) {
-                Ok(s) => s.fmt(f),
-                Err(err) => match s.get(..err.valid_up_to()) {
-                    Some(s) => unsafe { str::from_utf8_unchecked(s) }.fmt(f),
-                    None => Ok(()),
-                },
-            };
-        }
-        Ok(())
+        display_error(self.body, f)
     }
 }
 
 impl<'a> fmt::Debug for ErrorResponse<'a> {
+    #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // https://www.postgresql.org/docs/current/protocol-error-fields.html
-        let mut d = f.debug_struct("ErrorResponse");
-        let mut bytes = self.body;
-
-        while let Some((ty, rest)) = bytes.split_first()
-            && *ty != 0
-            && let Some((cstr, rest)) =
-                matches::find_nul(rest).and_then(|b| rest.split_at_checked(b.len() + 1))
-        {
-            bytes = rest;
-            let name = match ty {
-                b'S' => "severity_local",
-                b'V' => "severity",
-                b'C' => "code",
-                b'M' => "message",
-                b'D' => "detail",
-                b'H' => "hint",
-                b'P' => "position",
-                b'p' => "internal_position",
-                b'q' => "internal_query",
-                b'W' => "where",
-                b's' => "schema_name",
-                b't' => "table_name",
-                b'c' => "column_name",
-                b'd' => "data_type_name",
-                b'n' => "constraint_name",
-                b'F' => "file",
-                b'L' => "line",
-                b'R' => "routine",
-                _ => "..",
-            };
-            let cstr = unsafe { CStr::from_bytes_with_nul_unchecked(cstr) };
-            d.field(name, &cstr);
-        }
-        d.finish()
+        debug_error(self.body, "ErrorResponse", f)
     }
+}
+
+impl<'a> fmt::Display for NoticeResponse<'a> {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        display_error(self.body, f)
+    }
+}
+
+impl<'a> fmt::Debug for NoticeResponse<'a> {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        debug_error(self.body, "NoticeResponse", f)
+    }
+}
+
+fn display_error(mut bytes: &[u8], f: &mut fmt::Formatter) -> fmt::Result {
+    while let Some((ty, rest)) = bytes.split_first()
+        && let Some((cstr, rest)) =
+            matches::find_nul(rest).and_then(|b| rest.split_at_checked(b.len() + 1))
+    {
+        bytes = rest;
+        if *ty != b'M' {
+            continue;
+        }
+        let Some((_, s)) = cstr.split_last() else {
+            break;
+        };
+        return match str::from_utf8(s) {
+            Ok(s) => write!(f, "{s}"),
+            Err(err) => match s.get(..err.valid_up_to()) {
+                Some(s) => write!(f, "{}", unsafe { str::from_utf8_unchecked(s) }),
+                None => Ok(()),
+            },
+        };
+    }
+    Ok(())
+}
+
+fn debug_error(mut bytes: &[u8], name: &str, f: &mut fmt::Formatter) -> fmt::Result {
+    // https://www.postgresql.org/docs/current/protocol-error-fields.html
+    let mut d = f.debug_struct(name);
+
+    while let Some((ty, rest)) = bytes.split_first()
+        && *ty != 0
+        && let Some((cstr, rest)) =
+            matches::find_nul(rest).and_then(|b| rest.split_at_checked(b.len() + 1))
+    {
+        bytes = rest;
+        let name = match ty {
+            b'S' => "severity_local",
+            b'V' => "severity",
+            b'C' => "code",
+            b'M' => "message",
+            b'D' => "detail",
+            b'H' => "hint",
+            b'P' => "position",
+            b'p' => "internal_position",
+            b'q' => "internal_query",
+            b'W' => "where",
+            b's' => "schema_name",
+            b't' => "table_name",
+            b'c' => "column_name",
+            b'd' => "data_type_name",
+            b'n' => "constraint_name",
+            b'F' => "file",
+            b'L' => "line",
+            b'R' => "routine",
+            _ => "..",
+        };
+        let cstr = unsafe { CStr::from_bytes_with_nul_unchecked(cstr) };
+        d.field(name, &cstr);
+    }
+    d.finish()
 }

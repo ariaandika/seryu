@@ -109,6 +109,8 @@ impl Postgres {
                 return Err(format!("unknown backend msg: {:?}", header[0] as char).into());
             };
             match ty {
+                // CopyInResponse
+                // CopyOutResponse
                 B::CommandComplete => (),
                 B::DataRow => {
                     for col in backend::DataRow::decode(body)? {
@@ -119,16 +121,16 @@ impl Postgres {
                     let err = backend::ErrorResponse::decode(body)?;
                     return Err(format!("{err:#?}").into());
                 }
+                B::EmptyQueryResponse => (),
+                B::NoticeResponse => {
+                    println!("pg notice: {}", backend::NoticeResponse::decode(body)?)
+                }
                 B::RowDescription => {
                     for field in backend::RowDescription::decode(body)? {
                         println!("{field:?}");
                     }
                 }
                 B::ReadyForQuery => break,
-                // CopyInResponse
-                // CopyOutResponse
-                // EmptyQueryResponse
-                // NoticeResponse
                 ty => return Err(format!("unexpected message: {:?}", ty).into()),
             }
         }
