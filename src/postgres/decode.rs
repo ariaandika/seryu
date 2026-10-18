@@ -26,7 +26,7 @@ impl<'a> Decoder<'a> {
     pub fn once<P: SizedRead<N>, const N: usize>(body: &[u8]) -> Result<P, DecodeError> {
         match body.try_into() {
             Ok(ok) => Ok(P::from_bytes(ok)),
-            Err(_) => Err(DecodeError::InsufficientBytes),
+            Err(_) => Err(DecodeError::Insufficient),
         }
     }
 
@@ -43,7 +43,7 @@ impl<'a> Decoder<'a> {
                 self.0 = rest;
                 Ok(P::from_bytes(ok))
             }
-            None => Err(DecodeError::InsufficientBytes),
+            None => Err(DecodeError::Insufficient),
         }
     }
 
@@ -57,11 +57,17 @@ impl<'a> Decoder<'a> {
 /// An error that may occur when decoding postgres message.
 #[derive(Debug)]
 pub enum DecodeError {
-    /// Message is not enough to complete decoding.
-    InsufficientBytes,
+    /// Malformed message.
+    ///
+    /// Either unknown message type or length is less than message header size.
+    Malformed,
+    /// Bytes is not enough to complete decoding.
+    Insufficient,
     /// String is not nul terminated.
     NoNulTerm,
-    /// Message are semantically invalid.
+    /// Invalid message semantic.
+    ///
+    /// The semantic detail are message specific.
     Invalid,
 }
 
@@ -70,8 +76,9 @@ impl error::Error for DecodeError {}
 impl fmt::Display for DecodeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InsufficientBytes => write!(f, "not enough bytes"),
-            Self::NoNulTerm => write!(f, "string was not nul terminated"),
+            Self::Malformed => write!(f, "malformed message"),
+            Self::Insufficient => write!(f, "not enough bytes"),
+            Self::NoNulTerm => write!(f, "string was not nul-terminated"),
             Self::Invalid => write!(f, "invalid message semantic"),
         }
     }

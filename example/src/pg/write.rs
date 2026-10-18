@@ -72,6 +72,7 @@ impl WriteBuf {
             self.len -= write;
             self.off += write;
         }
+        self.clear();
         Poll::Ready(Ok(()))
     }
 }

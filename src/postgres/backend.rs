@@ -6,17 +6,57 @@ use crate::postgres::row::Rows;
 use crate::postgres::{Column, Columns, Decode, DecodeError, Decoder, Row};
 use crate::{fmt, matches};
 
-// ===== message =====
+const MSGTYPE_SIZE: usize = size_of::<u8>();
+const LEN_SIZE: usize = size_of::<u32>();
+const PREFIX_SIZE: usize = MSGTYPE_SIZE + LEN_SIZE;
 
-/// Read one message.
-#[inline]
-pub fn read_message<'a, B: Buf<'a>>(mut bytes: B) -> Option<&'a [u8]> {
-    const MSGTYPE_SIZE: u32 = size_of::<u8>() as u32;
-    let len_bytes = bytes.as_bytes().first_chunk::<5>()?.last_chunk::<4>()?;
-    let len = u32::from_be_bytes(*len_bytes) + MSGTYPE_SIZE;
-    let message = bytes.as_bytes().get(..len as usize)?;
-    bytes.advance(message.len());
-    Some(message)
+// ===== Message =====
+
+/// Postgres generic message.
+#[derive(Debug, Clone)]
+pub struct Message<'a>(&'a [u8]);
+
+impl<'a> Message<'a> {
+    /// Read one message.
+    ///
+    /// Returns `None` if there is not enough bytes.
+    #[inline]
+    pub fn read<B: Buf<'a>>(mut bytes: B) -> Result<Option<Self>, DecodeError> {
+        let Some(header) = bytes.as_bytes().first_chunk::<PREFIX_SIZE>() else {
+            return Ok(None);
+        };
+
+        header
+            .first()
+            .copied()
+            .and_then(BackendType::from_raw)
+            .ok_or(DecodeError::Malformed)?;
+
+        let len = u32::from_be_bytes(unsafe { *header.as_ptr().add(1).cast() }) as usize;
+        if len < LEN_SIZE {
+            return Err(DecodeError::Malformed);
+        }
+
+        let Some(message) = bytes.as_bytes().get(..len + MSGTYPE_SIZE) else {
+            return Ok(None);
+        };
+        bytes.advance(message.len());
+        Ok(Some(Self(message)))
+    }
+
+    #[inline]
+    pub fn ty(&self) -> BackendType {
+        unsafe { *self.0.as_ptr().cast() }
+    }
+
+    #[inline]
+    pub fn len(&self) -> u32 {
+        u32::from_be_bytes(unsafe { *self.0.as_ptr().add(1).cast() })
+    }
+
+    pub fn body(&self) -> &'a [u8] {
+        unsafe { self.0.get_unchecked(PREFIX_SIZE..) }
+    }
 }
 
 macro_rules! msgtype {
