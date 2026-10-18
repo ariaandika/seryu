@@ -86,6 +86,9 @@ macro_rules! msgtype {
 }
 
 msgtype! {
+    ParseComplete,
+    BindComplete,
+    CloseComplete,
     CommandComplete,
     DataRow,
     ErrorResponse,
@@ -96,6 +99,7 @@ msgtype! {
     ParameterStatus,
     RowDescription,
     ReadyForQuery,
+    PortalSuspended,
 }
 
 struct ParameterStatus;
@@ -108,6 +112,44 @@ struct BackendKeyData;
 
 impl BackendKeyData {
     const MSGTYPE: u8 = b'K';
+}
+
+macro_rules! unit_msg {
+    ($(
+        $(#[doc = $doc:literal])*
+        $vis:vis struct $name:ident($ty:literal);
+    )*) => {$(
+        $(#[doc = $doc])*
+        #[derive(Debug)]
+        $vis struct $name;
+
+        impl Decode<'_> for $name {
+            const MSGTYPE: u8 = $ty;
+
+            #[inline]
+            fn decode(_: &[u8]) -> Result<Self, DecodeError> {
+                Ok(Self)
+            }
+        }
+    )*};
+}
+unit_msg! {
+    /// Parse-complete indicator.
+    pub struct ParseComplete(b'1');
+
+    /// Bind-complete indicator
+    pub struct BindComplete(b'2');
+
+    /// Close-complete indicator.
+    pub struct CloseComplete(b'3');
+
+    /// Response to an empty query string.
+    ///
+    /// This substitutes for [`CommandComplete`].
+    pub struct EmptyQueryResponse(b'I');
+
+    /// Portal-suspended indicator.
+    pub struct PortalSuspended(b's');
 }
 
 // ===== Authentication =====
@@ -274,23 +316,6 @@ impl<'a> Decode<'a> for DataRow<'a> {
     fn decode(body: &'a [u8]) -> Result<Self, DecodeError> {
         let mut dec = Decoder::new(body);
         Ok(Self { len: dec.decode_sized()?, body: dec.remaining() })
-    }
-}
-
-// ===== EmptyQueryResponse =====
-
-/// Response to an empty query string.
-///
-/// This substitutes for [`CommandComplete`].
-#[derive(Debug)]
-pub struct EmptyQueryResponse;
-
-impl Decode<'_> for EmptyQueryResponse {
-    const MSGTYPE: u8 = b'I';
-
-    #[inline]
-    fn decode(_: &[u8]) -> Result<Self, DecodeError> {
-        Ok(Self)
     }
 }
 

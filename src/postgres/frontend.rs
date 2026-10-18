@@ -5,6 +5,184 @@ use crate::alloc::OutOfCapacity;
 use crate::bytes::BufMut;
 use crate::postgres::{Encode, Encoder, Primitive};
 
+macro_rules! unit_msg {
+    ($(
+        $(#[doc = $doc:literal])*
+        $vis:vis struct $name:ident($ty:literal);
+    )*) => {$(
+        $(#[doc = $doc])*
+        #[derive(Debug)]
+        $vis struct $name;
+
+        impl Encode for $name {
+            const MSGTYPE: u8 = $ty;
+            #[inline]
+            fn size(&self) -> usize { 0 }
+            #[inline]
+            unsafe fn encode_raw(&self, _: *mut u8) { }
+        }
+    )*};
+}
+unit_msg! {
+    /// Flush command.
+    pub struct Flush(b'H');
+
+    /// Sync command.
+    pub struct Sync(b'S');
+
+    /// Termination.
+    pub struct Terminate(b'X');
+}
+
+// ===== Bind =====
+
+/// Bind command.
+#[derive(Debug)]
+pub struct Bind<'a> {
+    /// Destination portal name.
+    pub portal: &'a str,
+    /// Prepared statement name.
+    pub name: &'a str,
+    /// Parameter format codes.
+    pub formats: &'a [u16],
+    /// Parameter values.
+    pub params: &'a [&'a [u8]],
+    /// Result-column format codes.
+    pub results: &'a [u16],
+}
+
+impl Encode for Bind<'_> {
+    const MSGTYPE: u8 = b'B';
+
+    #[inline]
+    fn size(&self) -> usize {
+        self.portal.size()
+            + self.name.size()
+            + size_of::<u16>()
+            + size_of_val(self.formats)
+            + size_of::<u16>()
+            + (size_of::<u32>() * self.params.len())
+            + size_of_val(self.params)
+            + size_of::<u16>()
+            + size_of_val(self.results)
+    }
+
+    #[inline]
+    unsafe fn encode_raw(&self, ptr: *mut u8) {
+        let mut enc = Encoder::new(ptr);
+        unsafe {
+            enc.encode(self.portal);
+            enc.encode(self.name);
+            enc.encode(self.formats.len() as u16);
+            for &format in self.formats {
+                enc.encode(format);
+            }
+            enc.encode(self.params.len() as u16);
+            for &param in self.params {
+                enc.encode(param.len() as u32);
+                enc.encode(param);
+            }
+            enc.encode(self.results.len() as u16);
+            for &result in self.results {
+                enc.encode(result);
+            }
+        }
+    }
+}
+
+// ===== Close =====
+
+/// Close command.
+#[derive(Debug)]
+pub struct Close<'a> {
+    /// 'S' to close a prepared statement; or 'P' to close a portal.
+    pub ty: u8,
+    /// The name of the prepared statement or portal to close.
+    pub name: &'a CStr,
+}
+
+impl Encode for Close<'_> {
+    const MSGTYPE: u8 = b'C';
+
+    #[inline]
+    fn size(&self) -> usize {
+        self.ty.size() + self.name.size()
+    }
+
+    #[inline]
+    unsafe fn encode_raw(&self, ptr: *mut u8) {
+        let mut enc = Encoder::new(ptr);
+        unsafe {
+            enc.encode(self.ty);
+            enc.encode(self.name);
+        }
+    }
+}
+
+// ===== Execute =====
+
+/// Execute command.
+#[derive(Debug)]
+pub struct Execute<'a> {
+    /// Destination portal name.
+    pub portal: &'a str,
+    /// Maximum number of rows to return, zero denotes “no limit”.
+    pub max_row: u32,
+}
+
+impl Encode for Execute<'_> {
+    const MSGTYPE: u8 = b'E';
+
+    #[inline]
+    fn size(&self) -> usize {
+        self.portal.size() + self.max_row.size()
+    }
+
+    #[inline]
+    unsafe fn encode_raw(&self, ptr: *mut u8) {
+        let mut enc = Encoder::new(ptr);
+        unsafe {
+            enc.encode(self.portal);
+            enc.encode(self.max_row);
+        }
+    }
+}
+
+// ===== Parse =====
+
+/// Parse command.
+#[derive(Debug)]
+pub struct Parse<'a> {
+    /// Prepared statement name.
+    pub name: &'a str,
+    /// Query string.
+    pub query: &'a str,
+    /// Object ID of the data type for each parameter.
+    pub params: &'a [u32],
+}
+
+impl Encode for Parse<'_> {
+    const MSGTYPE: u8 = b'P';
+
+    #[inline]
+    fn size(&self) -> usize {
+        self.name.size() + self.query.size() + size_of::<u16>() + size_of_val(self.params)
+    }
+
+    #[inline]
+    unsafe fn encode_raw(&self, ptr: *mut u8) {
+        let mut enc = Encoder::new(ptr);
+        unsafe {
+            enc.encode(self.name);
+            enc.encode(self.query);
+            enc.encode(self.params.len() as u16);
+            for &param in self.params {
+                enc.encode(param);
+            }
+        }
+    }
+}
+
 // ===== Query =====
 
 /// Identifies the message as a simple query.
