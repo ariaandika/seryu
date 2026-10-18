@@ -3,7 +3,7 @@ use core::task::{Context, Poll};
 use genos::fd::AsFd;
 use genos::{arch, io, sys};
 
-use crate::task::WakerData;
+use crate::task::ContextExt;
 
 pub fn poll_write<Fd: AsFd + ?Sized>(
     fd: &Fd,
@@ -14,7 +14,7 @@ pub fn poll_write<Fd: AsFd + ?Sized>(
         Ok(read) => Poll::Ready(Ok(read)),
         Err(err) => {
             if err.code().is_retry() {
-                WakerData::from_waker(cx.waker()).register_write(fd);
+                cx.register_write(fd);
                 Poll::Pending
             } else {
                 Poll::Ready(Err(err))

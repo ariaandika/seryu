@@ -1,10 +1,7 @@
 use core::ptr;
 use core::task::{RawWaker, RawWakerVTable, Waker};
 
-use genos::fd::AsFd;
-
-use crate::shared::Global;
-use crate::task::{FdTable, TaskId};
+use crate::task::TaskId;
 
 pub struct WakerData {
     id: TaskId,
@@ -21,17 +18,17 @@ impl WakerData {
         Self { id }
     }
 
+    pub fn is(waker: &Waker) -> bool {
+        ptr::addr_eq(waker.vtable() as *const _, &raw const VTABLE)
+    }
+
     pub fn from_waker(waker: &Waker) -> &Self {
-        debug_assert!(ptr::addr_eq(waker.vtable() as *const _, &raw const VTABLE));
+        assert!(Self::is(waker));
         unsafe { &*waker.data().cast() }
     }
 
-    pub fn register_read<Fd: AsFd + ?Sized>(&self, fd: &Fd) {
-        FdTable::global().register_read(fd, self.clone());
-    }
-
-    pub fn register_write<Fd: AsFd + ?Sized>(&self, fd: &Fd) {
-        FdTable::global().register_write(fd, self.clone());
+    pub fn id(&self) -> TaskId {
+        self.id
     }
 
     /// # Safety
@@ -40,10 +37,6 @@ impl WakerData {
     pub unsafe fn create_waker(&self) -> Waker {
         unsafe { Waker::new(self as *const _ as *const _, &VTABLE) }
     }
-
-    pub fn id(&self) -> TaskId {
-        self.id
-    }
 }
 
 static VTABLE: RawWakerVTable = {
@@ -51,10 +44,10 @@ static VTABLE: RawWakerVTable = {
         RawWaker::new(data, &VTABLE)
     }
     unsafe fn wake(_: *const ()) {
-        todo!("waker `wake` virtual call")
+        unimplemented!("waker `wake` virtual call")
     }
     unsafe fn wake_by_ref(_: *const ()) {
-        todo!("waker `wake` virtual call")
+        unimplemented!("waker `wake` virtual call")
     }
     RawWakerVTable::new(clone, wake, wake_by_ref, drop)
 };

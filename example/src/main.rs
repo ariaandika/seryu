@@ -1,7 +1,5 @@
 #![allow(clippy::module_inception)]
 use core::fmt;
-use core::pin::pin;
-use core::task::Context;
 
 use genos::event::Epoll;
 use genos::fd::{AsFd, RawFd};
@@ -10,20 +8,16 @@ use seryu::os::Listener;
 use crate::alloc::MemoryPool;
 use crate::event::{Event, Events};
 use crate::http::HttpTask;
-use crate::rt::Shared;
-use crate::shared::Global;
-use crate::task::{FdTable, Queue, Tasks, WakerData};
+use crate::task::{ContextData, FdTable, Queue, Tasks, WakerData};
 
 mod alloc;
 mod io;
-mod shared;
 
 mod event;
 mod task;
 
 mod http;
 mod pg;
-mod rt;
 
 fn main() -> Result<(), Error> {
     alloc::init_brk();
@@ -46,8 +40,6 @@ fn main() -> Result<(), Error> {
     let mut queue = Queue::new_static();
     let mut events = Events::new_static();
 
-    pin!(Shared::new(fds)).setup();
-
     loop {
         // ===== Event scheduling =====
         while let Some(ev) = events.pop() {
@@ -63,17 +55,23 @@ fn main() -> Result<(), Error> {
                             }
                         }
                     };
-                    let fd = FdTable::global().insert(&socket)?;
-                    WakerData::new(tasks.peek_id()).register_read(&socket);
+
+                    // register fd to epoll
+                    let fd = socket.as_raw_fd();
                     epoll.add(&socket, Epoll::IN | Epoll::ET, fd as u64)?;
 
+                    // register interest for the new task to the fd
+                    let fd_prop = fds.insert(&socket)?;
+                    fd_prop.read = Some(WakerData::new(tasks.peek_id()));
+
+                    // store the task
                     let mem = mpool.alloc_page()?;
                     let task = HttpTask::new(socket, mem)?;
                     tasks.insert(task);
                 }
                 None => {
                     let fd = ev.data as RawFd;
-                    let prop = FdTable::global().get_mut(fd);
+                    let prop = fds.get_mut(fd);
 
                     if ev.events & Epoll::IN == Epoll::IN
                         && let Some(waker) = prop.read.take()
@@ -102,8 +100,8 @@ fn main() -> Result<(), Error> {
             let waker_data = WakerData::new(id);
             // SAFETY: `waker_data` does not move
             let waker = unsafe { waker_data.create_waker() };
-            let mut cx = Context::from_waker(&waker);
-            if task.poll(&mut cx).is_pending() {
+            let mut cx = ContextData::new(&waker, &mut fds);
+            if task.poll(cx.as_mut_context()).is_pending() {
                 continue;
             }
 
@@ -111,7 +109,7 @@ fn main() -> Result<(), Error> {
 
             let task = tasks.remove(id).unwrap();
             epoll.delete(&task.socket)?;
-            FdTable::global().remove(task.socket.as_raw_fd());
+            fds.remove(task.socket.as_raw_fd());
 
             mpool.release(task.page);
         }

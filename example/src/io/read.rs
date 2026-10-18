@@ -4,7 +4,7 @@ use core::task::{Context, Poll};
 use genos::fd::AsFd;
 use genos::{arch, io, sys};
 
-use crate::task::WakerData;
+use crate::task::ContextExt;
 
 pub fn poll_read<'a, Fd: AsFd + ?Sized>(
     fd: &'a Fd,
@@ -15,7 +15,7 @@ pub fn poll_read<'a, Fd: AsFd + ?Sized>(
         Ok(read) => Poll::Ready(Ok(read)),
         Err(err) => {
             if err.code().is_retry() {
-                WakerData::from_waker(cx.waker()).register_read(fd);
+                cx.register_read(fd);
                 Poll::Pending
             } else {
                 Poll::Ready(Err(err))

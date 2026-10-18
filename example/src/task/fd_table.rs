@@ -49,14 +49,17 @@ impl FdTable {
         unsafe { self.ptr.add(idx).as_mut() }
     }
 
-    pub fn insert<Fd: AsFd>(&mut self, fd: &Fd) -> Result<RawFd, InsertError<()>> {
+    pub fn insert<'a, Fd: AsFd>(&'a mut self, fd: &Fd) -> Result<&'a mut FdProp, InsertError<()>> {
         let fd = fd.as_raw_fd();
         let idx = fd.strict_sub(FD_OFF) as usize;
         if idx >= CAP {
             return Err(InsertError::new(()));
         }
-        unsafe { self.ptr.add(idx).write(FdProp::new(fd)) };
-        Ok(fd)
+        unsafe {
+            let mut ptr = self.ptr.add(idx);
+            ptr.write(FdProp::new(fd));
+            Ok(ptr.as_mut())
+        }
     }
 
     pub fn register_read<Fd: AsFd + ?Sized>(&mut self, fd: &Fd, waker: WakerData) {
