@@ -4,17 +4,22 @@ use core::slice;
 use core::task::{Context, Poll, ready};
 
 use genos::fd::AsFd;
-use genos::{arch, sys};
+use genos::{arch, io as sync_io, sys};
 use seryu::alloc::OutOfCapacity;
 use seryu::bytes::BufMut;
+use seryu::postgres::Encode;
 
 use crate::io;
+
+// ===== WriteBuf =====
 
 pub struct WriteBuf {
     ptr: NonNull<u8>,
     len: usize,
     off: usize,
 }
+
+// ===== getters/setters =====
 
 impl WriteBuf {
     pub const CAPACITY: usize = 1024;
@@ -30,6 +35,8 @@ impl WriteBuf {
     }
 }
 
+// ===== impl BufMut =====
+
 impl BufMut for &mut WriteBuf {
     fn spare_mut(&mut self) -> &mut [MaybeUninit<u8>] {
         unsafe {
@@ -43,22 +50,9 @@ impl BufMut for &mut WriteBuf {
     }
 }
 
-impl WriteBuf {
-    pub fn write(&mut self, bytes: &[u8]) -> Result<(), OutOfCapacity> {
-        let new_len = self.len + bytes.len();
-        if new_len > Self::CAPACITY {
-            return Err(OutOfCapacity);
-        }
-        unsafe {
-            self.ptr
-                .as_ptr()
-                .copy_from_nonoverlapping(bytes.as_ptr(), bytes.len());
-            self.ptr = self.ptr.add(bytes.len());
-        }
-        self.len += bytes.len();
-        Ok(())
-    }
+// ===== OS =====
 
+impl WriteBuf {
     /// Flush buffer.
     pub fn poll_flush<Fd: AsFd>(
         &mut self,
@@ -74,5 +68,25 @@ impl WriteBuf {
         }
         self.clear();
         Poll::Ready(Ok(()))
+    }
+
+    pub fn flush_sync<Fd: AsFd>(&mut self, fd: &Fd) -> Result<(), sys::Error<arch::sys_write>> {
+        while self.len != 0 {
+            let bytes = unsafe { slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) };
+            let write = sync_io::write(fd, bytes)?;
+            self.ptr = unsafe { self.ptr.add(write) };
+            self.len -= write;
+            self.off += write;
+        }
+        self.clear();
+        Ok(())
+    }
+}
+
+// ===== protocol =====
+
+impl WriteBuf {
+    pub fn write_msg<M: Encode>(&mut self, msg: M) -> Result<(), OutOfCapacity> {
+        msg.encode_msg(self)
     }
 }

@@ -57,6 +57,10 @@ impl<'a> Message<'a> {
     pub fn body(&self) -> &'a [u8] {
         unsafe { self.0.get_unchecked(PREFIX_SIZE..) }
     }
+
+    pub fn decode<D: Decode<'a>>(&self) -> Result<D, DecodeError> {
+        D::decode(self.body())
+    }
 }
 
 macro_rules! msgtype {
