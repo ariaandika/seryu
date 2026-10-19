@@ -11,6 +11,7 @@ pub struct Row<'a> {
     pub column_attrno: u16,
     pub dtype_oid: u32,
     pub dtype_size: i16,
+    pub type_modifier: u32,
     pub format: i16,
 }
 
@@ -36,7 +37,7 @@ impl<'a> Iterator for Rows<'a> {
         let name = matches::find_nul(self.body)?;
         let (name, rest) = unsafe { self.body.split_at_unchecked(name.len() + 1) };
         let name = unsafe { CStr::from_bytes_with_nul_unchecked(name) };
-        let (body, rest) = rest.split_first_chunk::<14>()?;
+        let (body, rest) = rest.split_first_chunk::<18>()?;
         self.body = rest;
         Some(Row {
             name,
@@ -44,7 +45,8 @@ impl<'a> Iterator for Rows<'a> {
             column_attrno: u16::from_be_bytes(*body[4..6].as_array()?),
             dtype_oid: u32::from_be_bytes(*body[6..10].as_array()?),
             dtype_size: i16::from_be_bytes(*body[10..12].as_array()?),
-            format: i16::from_be_bytes(*body[12..14].as_array()?),
+            type_modifier: u32::from_be_bytes(*body[12..16].as_array()?),
+            format: i16::from_be_bytes(*body[16..18].as_array()?),
         })
     }
 
