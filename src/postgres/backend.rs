@@ -26,11 +26,8 @@ impl<'a> Message<'a> {
             return Ok(None);
         };
 
-        header
-            .first()
-            .copied()
-            .and_then(BackendType::from_raw)
-            .ok_or(DecodeError::Malformed)?;
+        // this guarantee `self.ty()` safety
+        BackendType::from_raw(header[0]).ok_or(DecodeError::Malformed)?;
 
         let len = u32::from_be_bytes(unsafe { *header.as_ptr().add(1).cast() }) as usize;
         if len < LEN_SIZE {
@@ -44,20 +41,40 @@ impl<'a> Message<'a> {
         Ok(Some(Self(message)))
     }
 
+    /// Returns the message type.
+    ///
+    /// This is exclusive for backend message type.
     #[inline]
     pub fn ty(&self) -> BackendType {
         unsafe { *self.0.as_ptr().cast() }
     }
 
+    /// Returns the message length.
+    ///
+    /// Note that message length is the length itself (`u32`) and the body length.
     #[inline]
     pub fn len(&self) -> u32 {
         u32::from_be_bytes(unsafe { *self.0.as_ptr().add(1).cast() })
     }
 
+    /// Returns the message body.
+    #[inline]
     pub fn body(&self) -> &'a [u8] {
         unsafe { self.0.get_unchecked(PREFIX_SIZE..) }
     }
 
+    /// Decode a message.
+    ///
+    /// This also checks the message type.
+    #[inline]
+    pub fn decode_checked<D: Decode<'a>>(&self) -> Result<D, DecodeError> {
+        if self.ty() as u8 == D::MSGTYPE { self.decode() } else { Err(DecodeError::Unexpected) }
+    }
+
+    /// Decode a message.
+    ///
+    /// Note that this does not check for message type.
+    #[inline]
     pub fn decode<D: Decode<'a>>(&self) -> Result<D, DecodeError> {
         D::decode(self.body())
     }

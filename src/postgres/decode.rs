@@ -61,6 +61,8 @@ pub enum DecodeError {
     ///
     /// Either unknown message type or length is less than message header size.
     Malformed,
+    /// Unexpected message.
+    Unexpected,
     /// Bytes is not enough to complete decoding.
     Insufficient,
     /// String is not nul terminated.
@@ -77,6 +79,7 @@ impl fmt::Display for DecodeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Malformed => write!(f, "malformed message"),
+            Self::Unexpected => write!(f, "unexpected message"),
             Self::Insufficient => write!(f, "not enough bytes"),
             Self::NoNulTerm => write!(f, "string was not nul-terminated"),
             Self::Invalid => write!(f, "invalid message semantic"),
