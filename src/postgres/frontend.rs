@@ -61,8 +61,10 @@ impl Encode for Bind<'_> {
             + size_of::<u16>()
             + size_of_val(self.formats)
             + size_of::<u16>()
-            + (size_of::<u32>() * self.params.len())
-            + size_of_val(self.params)
+            + self
+                .params
+                .iter()
+                .fold(0, |v, n| v + size_of::<u32>() + n.len())
             + size_of::<u16>()
             + size_of_val(self.results)
     }
