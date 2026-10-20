@@ -40,8 +40,9 @@ impl WriteBuf {
 impl BufMut for &mut WriteBuf {
     fn spare_mut(&mut self) -> &mut [MaybeUninit<u8>] {
         unsafe {
+            let ptr = self.ptr.as_ptr().add(self.len);
             let spare = WriteBuf::CAPACITY - self.off - self.len;
-            slice::from_raw_parts_mut(self.ptr.as_ptr().cast(), spare)
+            slice::from_raw_parts_mut(ptr.cast(), spare)
         }
     }
 

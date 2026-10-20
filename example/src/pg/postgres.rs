@@ -1,9 +1,11 @@
 use core::ffi::CStr;
+use core::mem;
 
-use genos::net;
+use genos::{arch, net, sys};
 use genos::net::Socket;
-use seryu::postgres::backend::BackendType as B;
-use seryu::postgres::{backend, frontend};
+use seryu::alloc::OutOfCapacity;
+use seryu::postgres::backend::{BackendType as B, Message};
+use seryu::postgres::{Encode, backend, frontend};
 
 use crate::pg::read::ReadBuf;
 use crate::pg::write::WriteBuf;
@@ -123,7 +125,7 @@ impl Postgres {
                 B::CommandComplete => (),
                 B::DataRow => {
                     for col in msg.decode::<backend::DataRow>()? {
-                        println!("{col:?}");
+                        println!("data: {col:?}");
                     }
                 }
                 B::ErrorResponse => return as_error(msg),
@@ -131,7 +133,7 @@ impl Postgres {
                 B::NoticeResponse => on_notice!(msg),
                 B::RowDescription => {
                     for field in msg.decode::<backend::RowDescription>()? {
-                        println!("{field:?}");
+                        println!("row: {field:?}");
                     }
                 }
                 B::ReadyForQuery => break,
@@ -143,10 +145,56 @@ impl Postgres {
     }
 }
 
+impl Postgres {
+    pub fn read_sync(&mut self) -> Result<bool, sys::Error<arch::sys_read>> {
+        self.read_buf.read_fd_sync(&self.socket)
+    }
+
+    pub fn read_msg(&mut self) -> Result<Message<'_>, Error> {
+        loop {
+            let Some(msg) = self.read_buf.read_msg()? else {
+                if self.read_sync()? {
+                    return Err("connection terminated".into());
+                }
+                continue;
+            };
+            match msg.ty() {
+                B::ErrorResponse => return as_error(msg),
+                B::NoticeResponse => on_notice!(msg),
+                B::ParameterStatus => {
+                    // TODO: pg: parameter status
+                    continue;
+                }
+                _ => {}
+            }
+            // SAFETY: impossible
+            return Ok(unsafe { mem::transmute::<Message<'_>, Message<'_>>(msg) });
+        }
+    }
+
+    pub fn drain_to_sync(&mut self) -> Result<(), Error> {
+        loop {
+            let msg = self.read_msg()?;
+            if matches!(msg.ty(), B::ReadyForQuery) {
+                break Ok(());
+            }
+        }
+    }
+
+    pub fn write_msg<M: Encode>(&mut self, msg: M) -> Result<(), OutOfCapacity> {
+        msg.encode_msg(&mut self.write_buf)
+    }
+
+    pub fn flush_sync(&mut self) -> Result<(), sys::Error<arch::sys_write>> {
+        self.write_buf.flush_sync(&self.socket)
+    }
+}
+
 // ===== helpers =====
 
-fn as_error<T>(msg: backend::Message) -> Result<T, Error> {
-    Err(msg.decode::<backend::ErrorResponse>().unwrap().into())
+fn as_error<T>(msg: Message) -> Result<T, Error> {
+    println!("db error: {:#?}", msg.decode::<backend::ErrorResponse>().unwrap());
+    Err(Error)
 }
 
 macro_rules! on_notice {
