@@ -92,15 +92,52 @@ impl Encode for Bind<'_> {
     }
 }
 
+// ===== CancelRequest =====
+
+/// Bind command.
+#[derive(Debug)]
+pub struct CancelRequest<'a> {
+    pub pid: u32,
+    /// Secret key for the target backend.
+    pub key: &'a [u8],
+}
+
+impl<'a> CancelRequest<'a> {
+    /// Encode startup message to given buffer.
+    #[inline]
+    pub fn encode<B: BufMut>(&self, mut buf: B) -> Result<(), OutOfCapacity> {
+        let len = size_of::<u32>() + size_of::<u32>() + self.key.len();
+
+        if buf.spare_mut().len() < len {
+            return Err(OutOfCapacity);
+        }
+
+        unsafe {
+            const CODE: u32 = {
+                let msb = 1234;
+                let lsb = 5678;
+                (msb << u16::BITS) | lsb
+            };
+
+            let mut enc = Encoder::new(buf.spare_mut().as_mut_ptr());
+            enc.encode(CODE);
+            enc.encode(self.pid);
+            enc.encode(self.key);
+        }
+
+        Ok(())
+    }
+}
+
 // ===== Close =====
 
 /// Close command.
 #[derive(Debug)]
 pub struct Close<'a> {
     /// 'S' to close a prepared statement; or 'P' to close a portal.
-    pub ty: u8,
+    pub kind: u8,
     /// The name of the prepared statement or portal to close.
-    pub name: &'a CStr,
+    pub name: &'a str,
 }
 
 impl Encode for Close<'_> {
@@ -108,14 +145,43 @@ impl Encode for Close<'_> {
 
     #[inline]
     fn size(&self) -> usize {
-        self.ty.size() + self.name.size()
+        self.kind.size() + self.name.size()
     }
 
     #[inline]
     unsafe fn encode_raw(&self, ptr: *mut u8) {
         let mut enc = Encoder::new(ptr);
         unsafe {
-            enc.encode(self.ty);
+            enc.encode(self.kind);
+            enc.encode(self.name);
+        }
+    }
+}
+
+// ===== Describe =====
+
+/// Describe command.
+#[derive(Debug)]
+pub struct Describe<'a> {
+    /// 'S' to describe a prepared statement; or 'P' to describe a portal.
+    pub kind: u8,
+    /// Prepared statement or portal name.
+    pub name: &'a str,
+}
+
+impl Encode for Describe<'_> {
+    const MSGTYPE: u8 = b'D';
+
+    #[inline]
+    fn size(&self) -> usize {
+        self.kind.size() + self.name.size()
+    }
+
+    #[inline]
+    unsafe fn encode_raw(&self, ptr: *mut u8) {
+        let mut enc = Encoder::new(ptr);
+        unsafe {
+            enc.encode(self.kind);
             enc.encode(self.name);
         }
     }

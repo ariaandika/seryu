@@ -3,7 +3,7 @@ use core::ffi::CStr;
 
 use crate::bytes::Buf;
 use crate::postgres::row::Rows;
-use crate::postgres::{Column, Columns, Decode, DecodeError, Decoder, Row};
+use crate::postgres::{Column, Columns, Decode, DecodeError, Decoder, Params, Row};
 use crate::{fmt, matches};
 
 const MSGTYPE_SIZE: usize = size_of::<u8>();
@@ -106,6 +106,7 @@ msgtype! {
     ParseComplete,
     BindComplete,
     CloseComplete,
+    NotificationResponse,
     CommandComplete,
     DataRow,
     ErrorResponse,
@@ -116,19 +117,9 @@ msgtype! {
     ParameterStatus,
     RowDescription,
     ReadyForQuery,
+    NoData,
     PortalSuspended,
-}
-
-struct ParameterStatus;
-
-impl ParameterStatus {
-    const MSGTYPE: u8 = b'S';
-}
-
-struct BackendKeyData;
-
-impl BackendKeyData {
-    const MSGTYPE: u8 = b'K';
+    ParameterDescription,
 }
 
 macro_rules! unit_msg {
@@ -164,6 +155,9 @@ unit_msg! {
     ///
     /// This substitutes for [`CommandComplete`].
     pub struct EmptyQueryResponse(b'I');
+
+    /// No-data indicator.
+    pub struct NoData(b'n');
 
     /// Portal-suspended indicator.
     pub struct PortalSuspended(b's');
@@ -275,6 +269,27 @@ impl<'a> Decode<'a> for AuthenticationSASL<'a> {
     }
 }
 
+// ===== BackendKeyData =====
+
+/// Cancellation key data.
+#[derive(Debug)]
+pub struct BackendKeyData<'a> {
+    /// PID of the backend.
+    pub pid: u32,
+    /// Secret key.
+    pub key: &'a [u8],
+}
+
+impl<'a> Decode<'a> for BackendKeyData<'a> {
+    const MSGTYPE: u8 = b'K';
+
+    #[inline]
+    fn decode(body: &'a [u8]) -> Result<Self, DecodeError> {
+        let mut dec = Decoder::new(body);
+        Ok(Self { pid: dec.decode_sized()?, key: dec.remaining() })
+    }
+}
+
 // ===== CommandComplete =====
 
 /// Command-completed response message.
@@ -365,6 +380,93 @@ impl<'a> Decode<'a> for NoticeResponse<'a> {
     #[inline]
     fn decode(body: &'a [u8]) -> Result<Self, DecodeError> {
         Ok(Self { body })
+    }
+}
+
+// ===== NotificationResponse =====
+
+/// Notification response.
+#[derive(Debug)]
+pub struct NotificationResponse<'a> {
+    /// PID of the notifying backend process.
+    pub pid: u32,
+    /// Channel name.
+    pub channel: &'a CStr,
+    /// "payload” string.
+    pub payload: &'a CStr,
+}
+
+impl<'a> Decode<'a> for NotificationResponse<'a> {
+    const MSGTYPE: u8 = b'A';
+
+    #[inline]
+    fn decode(body: &'a [u8]) -> Result<Self, DecodeError> {
+        let mut dec = Decoder::new(body);
+        Ok(Self {
+            pid: dec.decode_sized()?,
+            channel: dec.decode_string()?,
+            payload: dec.decode_string()?,
+        })
+    }
+}
+
+// ===== ParameterDescription =====
+
+/// Parameter description.
+#[derive(Debug)]
+pub struct ParameterDescription<'a> {
+    len: usize,
+    params: &'a [u8],
+}
+
+impl<'a> ParameterDescription<'a> {
+    /// Returns the parameter OIDs as iterator.
+    #[inline]
+    pub fn iter(&self) -> Params<'a> {
+        Params::new(self.len, self.params)
+    }
+}
+
+impl<'a> Decode<'a> for ParameterDescription<'a> {
+    const MSGTYPE: u8 = b't';
+
+    #[inline]
+    fn decode(body: &'a [u8]) -> Result<Self, DecodeError> {
+        let mut dec = Decoder::new(body);
+        let len = dec.decode_sized::<u16, _>()? as _;
+        Ok(Self { len, params: dec.remaining() })
+    }
+}
+
+impl<'a> IntoIterator for ParameterDescription<'a> {
+    type Item = u32;
+
+    type IntoIter = Params<'a>;
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        Params::new(self.len, self.params)
+    }
+}
+
+// ===== ParameterStatus  =====
+
+/// Runtime parameter status report.
+#[derive(Debug)]
+pub struct ParameterStatus<'a> {
+    pub name: &'a CStr,
+    pub value: &'a CStr,
+}
+
+impl<'a> Decode<'a> for ParameterStatus<'a> {
+    const MSGTYPE: u8 = b'S';
+
+    #[inline]
+    fn decode(body: &'a [u8]) -> Result<Self, DecodeError> {
+        let mut dec = Decoder::new(body);
+        let name = dec.decode_string()?;
+        let value = dec.decode_string()?;
+        Ok(Self { name, value })
     }
 }
 

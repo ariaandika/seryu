@@ -1,6 +1,8 @@
 use core::ffi::CStr;
 use core::{error, fmt};
 
+use DecodeError as E;
+
 use crate::postgres::SizedRead;
 
 // ===== Decode =====
@@ -24,27 +26,25 @@ impl<'a> Decoder<'a> {
     }
 
     pub fn once<P: SizedRead<N>, const N: usize>(body: &[u8]) -> Result<P, DecodeError> {
-        match body.try_into() {
-            Ok(ok) => Ok(P::from_bytes(ok)),
-            Err(_) => Err(DecodeError::Insufficient),
-        }
+        body.try_into()
+            .map(P::from_bytes)
+            .map_err(|_| E::Insufficient)
     }
 
     pub fn cstr(body: &[u8]) -> Result<&CStr, DecodeError> {
-        match CStr::from_bytes_with_nul(body) {
-            Ok(ok) => Ok(ok),
-            Err(_) => Err(DecodeError::NoNulTerm),
-        }
+        CStr::from_bytes_with_nul(body).map_err(|_| E::NoNulTerm)
     }
 
     pub fn decode_sized<P: SizedRead<N>, const N: usize>(&mut self) -> Result<P, DecodeError> {
-        match self.0.split_first_chunk() {
-            Some((ok, rest)) => {
-                self.0 = rest;
-                Ok(P::from_bytes(ok))
-            }
-            None => Err(DecodeError::Insufficient),
-        }
+        let (ok, rest) = self.0.split_first_chunk().ok_or(E::Insufficient)?;
+        self.0 = rest;
+        Ok(P::from_bytes(ok))
+    }
+
+    pub fn decode_string(&mut self) -> Result<&'a CStr, DecodeError> {
+        let ok = CStr::from_bytes_until_nul(self.0).map_err(|_| E::Insufficient)?;
+        self.0 = unsafe { self.0.get_unchecked(ok.to_bytes_with_nul().len()..) };
+        Ok(ok)
     }
 
     pub fn remaining(&self) -> &'a [u8] {
