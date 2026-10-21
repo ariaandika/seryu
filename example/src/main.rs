@@ -1,16 +1,16 @@
 #![allow(clippy::module_inception)]
-use core::fmt;
-
 use genos::event::Epoll;
 use genos::fd::{AsFd, RawFd};
 use seryu::os::Listener;
 
 use crate::alloc::MemoryPool;
+use crate::error::Error;
 use crate::event::{Event, Events};
 use crate::http::HttpTask;
 use crate::task::{ContextData, FdTable, Queue, Tasks, WakerData};
 
 mod alloc;
+mod error;
 mod io;
 
 mod event;
@@ -119,17 +119,5 @@ fn main() -> Result<(), Error> {
         // ===== Wait for events =====
 
         events.wait(&epoll)?;
-    }
-}
-
-// ===== Error =====
-
-#[derive(Debug)]
-struct Error;
-
-impl<E: fmt::Display> From<E> for Error {
-    fn from(value: E) -> Self {
-        eprintln!("{value}");
-        Self
     }
 }
