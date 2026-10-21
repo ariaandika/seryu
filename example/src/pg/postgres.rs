@@ -1,11 +1,11 @@
 use core::ffi::CStr;
 use core::mem;
 
-use genos::{arch, net, sys};
 use genos::net::Socket;
+use genos::{arch, net, sys};
 use seryu::alloc::OutOfCapacity;
 use seryu::postgres::backend::{BackendType as B, Message};
-use seryu::postgres::{Encode, backend, frontend};
+use seryu::postgres::{Decode, Encode, backend, frontend};
 
 use crate::pg::read::ReadBuf;
 use crate::pg::write::WriteBuf;
@@ -16,6 +16,8 @@ pub struct Postgres {
     read_buf: ReadBuf,
     write_buf: WriteBuf,
 }
+
+// ===== Constructor =====
 
 impl Postgres {
     #[allow(unused)]
@@ -46,6 +48,8 @@ impl Postgres {
         Ok(Self { socket, read_buf, write_buf })
     }
 }
+
+// ===== Startup =====
 
 impl Postgres {
     pub fn startup(
@@ -94,7 +98,7 @@ impl Postgres {
             };
             match msg.ty() {
                 B::ErrorResponse => return as_error(msg),
-                B::BackendKeyData => (),  // TODO: pg: backend key data
+                B::BackendKeyData => (), // TODO: pg: backend key data
                 B::NoticeResponse => on_notice!(msg),
                 B::ParameterStatus => (), // TODO: pg: parameter status
                 B::ReadyForQuery => break,
@@ -105,48 +109,10 @@ impl Postgres {
     }
 }
 
-impl Postgres {
-    pub fn simple_query(&mut self, sql: &str) -> Result<(), Error> {
-        self.write_buf.write_msg(frontend::Query { sql })?;
-        self.write_buf.flush_sync(&self.socket)?;
-
-        self.read_buf.read_fd_sync(&self.socket)?;
-        loop {
-            let Some(msg) = self.read_buf.read_msg()? else {
-                let is_eof = self.read_buf.read_fd_sync(&self.socket)?;
-                if is_eof {
-                    return Err("connection terminated".into());
-                }
-                continue;
-            };
-            match msg.ty() {
-                // CopyInResponse
-                // CopyOutResponse
-                B::CommandComplete => (),
-                B::DataRow => {
-                    for col in msg.decode::<backend::DataRow>()? {
-                        println!("data: {col:?}");
-                    }
-                }
-                B::ErrorResponse => return as_error(msg),
-                B::EmptyQueryResponse => (),
-                B::NoticeResponse => on_notice!(msg),
-                B::RowDescription => {
-                    for field in msg.decode::<backend::RowDescription>()? {
-                        println!("row: {field:?}");
-                    }
-                }
-                B::ReadyForQuery => break,
-                ty => return Err(format!("unexpected message: {:?}", ty).into()),
-            }
-        }
-
-        Ok(())
-    }
-}
+// ===== Read =====
 
 impl Postgres {
-    pub fn read_sync(&mut self) -> Result<bool, sys::Error<arch::sys_read>> {
+    fn read_sync(&mut self) -> Result<bool, sys::Error<arch::sys_read>> {
         self.read_buf.read_fd_sync(&self.socket)
     }
 
@@ -167,20 +133,27 @@ impl Postgres {
                 }
                 _ => {}
             }
-            // SAFETY: impossible
+            // SAFETY: impossible: https://users.rust-lang.org/t/mutably-borrowed-in-previous-iteration-despite-no-chance-of-conflicting-borrow/83274/3
             return Ok(unsafe { mem::transmute::<Message<'_>, Message<'_>>(msg) });
         }
     }
 
+    pub fn decode_msg<'a, D: Decode<'a>>(&'a mut self) -> Result<D, Error> {
+        Ok(self.read_msg()?.decode_checked()?)
+    }
+
     pub fn drain_to_sync(&mut self) -> Result<(), Error> {
         loop {
-            let msg = self.read_msg()?;
-            if matches!(msg.ty(), B::ReadyForQuery) {
+            if matches!(self.read_msg()?.ty(), B::ReadyForQuery) {
                 break Ok(());
             }
         }
     }
+}
 
+// ===== Write =====
+
+impl Postgres {
     pub fn write_msg<M: Encode>(&mut self, msg: M) -> Result<(), OutOfCapacity> {
         msg.encode_msg(&mut self.write_buf)
     }
@@ -204,7 +177,3 @@ macro_rules! on_notice {
     }};
 }
 use on_notice;
-
-// fn on_notice(msg: backend::Message) {
-//     println!("notice: {}", msg.decode::<backend::NoticeResponse>().unwrap());
-// }
