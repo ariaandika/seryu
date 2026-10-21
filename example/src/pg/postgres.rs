@@ -1,5 +1,6 @@
 use core::ffi::CStr;
-use core::{fmt, mem, task};
+use core::task::{self, Poll, ready};
+use core::{fmt, mem};
 
 use genos::net::Socket;
 use genos::{arch, net, sys};
@@ -7,10 +8,10 @@ use seryu::alloc::OutOfCapacity;
 use seryu::postgres::backend::{BackendType as B, Message};
 use seryu::postgres::{Decode, Encode, backend, frontend};
 
-use crate::pg::read::ReadBuf;
-use crate::pg::write::WriteBuf;
 use crate::alloc;
 use crate::error::Error;
+use crate::pg::read::ReadBuf;
+use crate::pg::write::WriteBuf;
 
 pub struct Postgres {
     socket: Socket,
@@ -59,6 +60,33 @@ impl Postgres {
 
     /// Read one message.
     ///
+    /// This converts `ErrorResponse` to `Result::Err`, and consume `NoticeResponse` and
+    /// `ParameterStatus`.
+    pub fn poll_msg<'a>(&'a mut self, cx: &mut task::Context) -> Poll<Result<Message<'a>, Error>> {
+        loop {
+            let Some(msg) = self.read_buf.read_msg()? else {
+                if ready!(self.read_buf.poll_read_fd(&self.socket, cx))? {
+                    return Poll::Ready(Err("connection terminated".into()));
+                }
+                continue;
+            };
+            match msg.ty() {
+                B::ErrorResponse => return Poll::Ready(as_error(msg)),
+                B::NoticeResponse => {
+                    println!("notice: {}", msg.decode::<backend::NoticeResponse>().unwrap())
+                }
+                B::ParameterStatus => {} // TODO: pg: parameter status
+                _ => {
+                    // SAFETY: impossible: https://users.rust-lang.org/t/mutably-borrowed-in-previous-iteration-despite-no-chance-of-conflicting-borrow/83274/3
+                    let msg = unsafe { mem::transmute::<Message<'_>, Message<'_>>(msg) };
+                    return Poll::Ready(Ok(msg));
+                }
+            }
+        }
+    }
+
+    /// Read one message.
+    ///
     /// This converts `ErrorResponse` to `Result::Err`.
     ///
     /// This consume `NoticeResponse` and `ParameterStatus`.
@@ -72,7 +100,10 @@ impl Postgres {
             };
             match msg.ty() {
                 B::ErrorResponse => return as_error(msg),
-                B::NoticeResponse => on_notice!(msg),
+                B::NoticeResponse => {
+                    println!("notice: {}", msg.decode::<backend::NoticeResponse>().unwrap());
+                    continue;
+                }
                 B::ParameterStatus => continue, // TODO: pg: parameter status
                 _ => {}
             }
@@ -88,14 +119,6 @@ impl Postgres {
     /// This consume `NoticeResponse` and `ParameterStatus`.
     pub fn decode_msg<'a, D: Decode<'a>>(&'a mut self) -> Result<D, Error> {
         Ok(self.read_msg()?.decode_checked()?)
-    }
-
-    pub fn drain_to_sync(&mut self) -> Result<(), Error> {
-        loop {
-            if matches!(self.read_msg()?.ty(), B::ReadyForQuery) {
-                break Ok(());
-            }
-        }
     }
 }
 
@@ -117,7 +140,7 @@ impl Postgres {
     pub fn poll_flush(
         &mut self,
         cx: &mut task::Context,
-    ) -> task::Poll<Result<(), sys::Error<arch::sys_write>>> {
+    ) -> Poll<Result<(), sys::Error<arch::sys_write>>> {
         self.write_buf.poll_flush(&self.socket, cx)
     }
 }
@@ -134,11 +157,3 @@ fn as_error<T>(msg: Message) -> Result<T, Error> {
     println!("db error: {:#?}", msg.decode::<backend::ErrorResponse>().unwrap());
     Err(Error)
 }
-
-macro_rules! on_notice {
-    ($msg:ident) => {{
-        println!("notice: {}", $msg.decode::<backend::NoticeResponse>().unwrap());
-        continue;
-    }};
-}
-use on_notice;

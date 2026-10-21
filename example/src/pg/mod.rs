@@ -1,6 +1,6 @@
 use core::{pin, task};
 
-pub use postgres::Postgres;
+pub(crate) use postgres::Postgres;
 
 use crate::error::Error;
 
@@ -25,16 +25,16 @@ async fn connect_inner() -> Result<(), Error> {
 
     startup::Startup::new("deuzo", None, None, &mut conn).await?;
 
-    let res = query::query(&mut conn);
-    println!("query 1: {res:?}");
-    if res.is_err() {
-        conn.drain_to_sync()?;
+    let mut query = query::Query::new("s1", "p1", "SELECT * FROM protocols");
+
+    while let Some(cols) = query.fetch(&mut conn).await? {
+        println!("query 1: {cols:?}");
     }
 
-    let res = query::query(&mut conn);
-    println!("query 2: {res:?}");
-    if res.is_err() {
-        conn.drain_to_sync()?;
+    let mut query = query::Query::new("s1", "p1", "SELECT *, 'nice' FROM protocols");
+
+    while let Some(cols) = query.fetch(&mut conn).await? {
+        println!("query 2: {cols:?}");
     }
 
     let res = query::insert(&mut conn);

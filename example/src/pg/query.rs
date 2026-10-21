@@ -1,8 +1,9 @@
-use core::mem;
+use core::task::{self, Poll, ready};
+use core::{mem, pin};
 
 use seryu::postgres::{Columns, backend, frontend};
 
-use crate::Error;
+use crate::error::Error;
 use crate::pg::Postgres;
 
 // ===== Query =====
@@ -23,7 +24,8 @@ enum Phase {
     ParseRes,
     BindRes,
     DataRes,
-    Closing,
+    CloseRes,
+    CloseSyncRes,
     Closed,
 }
 
@@ -33,43 +35,59 @@ impl<'a> Query<'a> {
     }
 
     /// Fetch one column from the query.
-    pub fn fetch<'p>(&mut self, conn: &'p mut Postgres) -> Result<Option<Columns<'p>>, Error> {
+    pub fn fetch<'p>(&mut self, conn: &'p mut Postgres) -> Fetch<'a, '_, 'p> {
+        Fetch { state: self, conn }
+    }
+}
+
+// ===== Fetch =====
+
+pub struct Fetch<'a, 'q, 'c> {
+    state: &'q mut Query<'a>,
+    conn: &'c mut Postgres,
+}
+
+impl<'a, 'q, 'c> Future for Fetch<'a, 'q, 'c> {
+    type Output = Result<Option<Columns<'c>>, Error>;
+
+    fn poll(self: pin::Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
+        let Self { state, conn } = self.get_mut();
         loop {
-            if self.flush {
-                conn.flush_sync()?;
-                self.flush = false;
+            if state.flush {
+                ready!(conn.poll_flush(cx))?;
+                state.flush = false;
             }
-            match self.phase {
+            match state.phase {
                 Phase::Init => {
                     conn.write_msg(frontend::Parse {
-                        name: self.name,
-                        query: self.query,
+                        name: state.name,
+                        query: state.query,
                         params: &[],
                     })?;
                     conn.write_msg(frontend::Bind {
-                        portal: self.portal,
-                        name: self.name,
+                        portal: state.portal,
+                        name: state.name,
                         formats: &[],
                         params: &[],
                         results: &[1],
                     })?;
-                    conn.write_msg(frontend::Execute { portal: self.portal, max_row: 0 })?;
+                    conn.write_msg(frontend::Execute { portal: state.portal, max_row: 0 })?;
                     conn.write_msg(frontend::Sync)?;
-                    self.flush = true;
-                    self.phase = Phase::ParseRes;
+                    state.flush = true;
+                    state.phase = Phase::ParseRes;
                 }
                 Phase::ParseRes => {
-                    conn.decode_msg::<backend::ParseComplete>()?;
-                    self.phase = Phase::BindRes;
+                    ready!(conn.poll_msg(cx))?.decode_checked::<backend::ParseComplete>()?;
+                    state.phase = Phase::BindRes;
                 }
                 Phase::BindRes => {
-                    conn.decode_msg::<backend::BindComplete>()?;
-                    self.phase = Phase::DataRes;
+                    ready!(conn.poll_msg(cx))?.decode_checked::<backend::BindComplete>()?;
+                    state.phase = Phase::DataRes;
                 }
                 Phase::DataRes => {
                     loop {
                         use backend::BackendType as B;
-                        let msg = conn.read_msg()?;
+                        let msg = ready!(conn.poll_msg(cx))?;
                         match msg.ty() {
                             B::CommandComplete => {}
                             B::DataRow => {
@@ -78,45 +96,39 @@ impl<'a> Query<'a> {
                                 let cols = unsafe {
                                     mem::transmute::<Columns<'_>, Columns<'_>>(msg.into_iter())
                                 };
-                                return Ok(Some(cols));
+                                return Poll::Ready(Ok(Some(cols)));
                             }
                             B::EmptyQueryResponse => {}
                             B::ReadyForQuery => break,
                             B::PortalSuspended => todo!(),
-                            ty => return Err(format!("unexpected message: {:?}", ty).into()),
+                            ty => {
+                                return Poll::Ready(Err(
+                                    format!("unexpected message: {:?}", ty).into()
+                                ));
+                            }
                         }
                     }
-                    conn.write_msg(frontend::Close { kind: b'S', name: self.name })?;
+                    conn.write_msg(frontend::Close { kind: b'S', name: state.name })?;
                     conn.write_msg(frontend::Sync)?;
-                    self.flush = true;
-                    self.phase = Phase::Closing;
+                    state.flush = true;
+                    state.phase = Phase::CloseRes;
                 }
-                Phase::Closing => {
-                    // NOTE: may pending
-                    conn.decode_msg::<backend::CloseComplete>()?;
-                    conn.decode_msg::<backend::ReadyForQuery>()?;
-                    self.phase = Phase::Closed;
-                    return Ok(None);
+                Phase::CloseRes => {
+                    ready!(conn.poll_msg(cx))?.decode_checked::<backend::CloseComplete>()?;
+                    state.phase = Phase::CloseSyncRes;
                 }
-                Phase::Closed => {
-                    return Ok(None);
+                Phase::CloseSyncRes => {
+                    ready!(conn.poll_msg(cx))?.decode_checked::<backend::ReadyForQuery>()?;
+                    state.phase = Phase::Closed;
+                    return Poll::Ready(Ok(None));
                 }
+                Phase::Closed => return Poll::Ready(Ok(None)),
             }
         }
     }
 }
 
 // ===== example =====
-
-pub fn query(conn: &mut Postgres) -> Result<(), Error> {
-    let mut query = Query::new("stmt", "portal", "select * from protocols");
-
-    while let Some(col) = query.fetch(conn)? {
-        println!("{col:?}");
-    }
-
-    Ok(())
-}
 
 pub fn insert(pg: &mut Postgres) -> Result<(), Error> {
     let name = "lmao_stmt2";
