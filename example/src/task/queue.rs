@@ -5,6 +5,8 @@ use seryu::alloc::slab::InsertError;
 
 use crate::alloc;
 
+// ===== Queue =====
+
 const CAP: usize = 64;
 
 pub struct Queue<T> {
@@ -29,11 +31,16 @@ impl<T> Queue<T> {
         Ok(())
     }
 
-    pub fn as_slice(&self) -> &[T] {
-        unsafe { slice::from_raw_parts(self.buf.as_ptr(), self.len) }
-    }
-
-    pub fn clear(&mut self) {
+    pub fn drain(&mut self) -> impl Iterator<Item = T>
+    where
+        T: Copy,
+    {
+        let len = self.len;
         self.len = 0;
+        unsafe {
+            slice::from_raw_parts(self.buf.as_ptr(), len)
+                .iter()
+                .copied()
+        }
     }
 }

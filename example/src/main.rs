@@ -90,7 +90,7 @@ fn main() -> Result<(), Error> {
 
         // ===== Task execution =====
 
-        for &id in queue.as_slice() {
+        for id in queue.drain() {
             let Some(task) = tasks.get_mut(id) else {
                 // dangling task id in scheduler
                 continue;
@@ -113,8 +113,6 @@ fn main() -> Result<(), Error> {
 
             mpool.release(task.page);
         }
-
-        queue.clear();
 
         // ===== Wait for events =====
 
