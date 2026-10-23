@@ -2,9 +2,9 @@ use core::ffi::CStr;
 use core::task::{self, Poll, ready};
 use core::{fmt, mem};
 
-use genos::net::Socket;
-use genos::{arch, net, sys};
+use genos::net::{self, Socket};
 use seryu::alloc::OutOfCapacity;
+use seryu::error::{ReadError, WriteError};
 use seryu::postgres::backend::{BackendType as B, Message};
 use seryu::postgres::{Decode, Encode, backend, frontend};
 
@@ -54,7 +54,7 @@ impl Postgres {
 // ===== Read =====
 
 impl Postgres {
-    fn read_sync(&mut self) -> Result<bool, sys::Error<arch::sys_read>> {
+    fn read_sync(&mut self) -> Result<bool, ReadError> {
         self.read_buf.read_fd_sync(&self.socket)
     }
 
@@ -133,14 +133,11 @@ impl Postgres {
         msg.encode_msg(&mut self.write_buf)
     }
 
-    pub fn flush_sync(&mut self) -> Result<(), sys::Error<arch::sys_write>> {
+    pub fn flush_sync(&mut self) -> Result<(), WriteError> {
         self.write_buf.flush_sync(&self.socket)
     }
 
-    pub fn poll_flush(
-        &mut self,
-        cx: &mut task::Context,
-    ) -> Poll<Result<(), sys::Error<arch::sys_write>>> {
+    pub fn poll_flush(&mut self, cx: &mut task::Context) -> Poll<Result<(), WriteError>> {
         self.write_buf.poll_flush(&self.socket, cx)
     }
 }

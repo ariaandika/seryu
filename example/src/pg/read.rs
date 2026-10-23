@@ -3,8 +3,9 @@ use core::slice;
 use core::task::{Context, Poll, ready};
 
 use genos::fd::AsFd;
-use genos::{arch, io as sync_io, sys};
+use genos::io as sync_io;
 use seryu::bytes::Buf;
+use seryu::error::ReadError;
 use seryu::postgres::DecodeError;
 use seryu::postgres::backend::Message;
 
@@ -55,7 +56,7 @@ impl ReadBuf {
         &mut self,
         fd: &Fd,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<bool, sys::Error<arch::sys_read>>> {
+    ) -> Poll<Result<bool, ReadError>> {
         let buf = unsafe {
             slice::from_raw_parts_mut(
                 self.ptr.as_ptr().add(self.len).cast(),
@@ -68,7 +69,7 @@ impl ReadBuf {
     }
 
     /// Returns `is_eof`.
-    pub fn read_fd_sync<Fd: AsFd>(&mut self, fd: &Fd) -> Result<bool, sys::Error<arch::sys_read>> {
+    pub fn read_fd_sync<Fd: AsFd>(&mut self, fd: &Fd) -> Result<bool, ReadError> {
         let buf = unsafe {
             slice::from_raw_parts_mut(
                 self.ptr.as_ptr().add(self.len).cast(),

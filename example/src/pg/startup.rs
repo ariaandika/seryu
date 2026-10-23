@@ -1,8 +1,8 @@
 use core::task::{self, Poll, ready};
 use core::{error, fmt, pin};
 
-use genos::{arch, sys};
 use seryu::alloc::OutOfCapacity;
+use seryu::error::{ReadError, WriteError};
 use seryu::postgres::{backend, frontend};
 
 use crate::error::Error;
@@ -88,9 +88,6 @@ impl Future for Startup<'_, '_> {
 }
 
 // ===== Error =====
-
-type ReadError = sys::Error<arch::sys_read>;
-type WriteError = sys::Error<arch::sys_write>;
 
 #[derive(Debug)]
 pub enum StartupError {

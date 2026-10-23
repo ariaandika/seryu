@@ -1,7 +1,8 @@
 use core::task::{Context, Poll};
 
 use genos::fd::AsFd;
-use genos::{arch, io, sys};
+use genos::io;
+use seryu::error::WriteError;
 
 use crate::task::ContextExt;
 
@@ -9,7 +10,7 @@ pub fn poll_write<Fd: AsFd + ?Sized>(
     fd: &Fd,
     buf: &[u8],
     cx: &mut Context,
-) -> Poll<Result<usize, sys::Error<arch::sys_write>>> {
+) -> Poll<Result<usize, WriteError>> {
     match io::write(fd, buf) {
         Ok(read) => Poll::Ready(Ok(read)),
         Err(err) => {

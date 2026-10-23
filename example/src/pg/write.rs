@@ -4,9 +4,10 @@ use core::slice;
 use core::task::{Context, Poll, ready};
 
 use genos::fd::AsFd;
-use genos::{arch, io as sync_io, sys};
+use genos::io as sync_io;
 use seryu::alloc::OutOfCapacity;
 use seryu::bytes::BufMut;
+use seryu::error::WriteError;
 use seryu::postgres::Encode;
 
 use crate::io;
@@ -59,7 +60,7 @@ impl WriteBuf {
         &mut self,
         fd: &Fd,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<(), sys::Error<arch::sys_write>>> {
+    ) -> Poll<Result<(), WriteError>> {
         while self.len != 0 {
             let bytes = unsafe { slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) };
             let write = ready!(io::poll_write(fd, bytes, cx))?;
@@ -71,7 +72,7 @@ impl WriteBuf {
         Poll::Ready(Ok(()))
     }
 
-    pub fn flush_sync<Fd: AsFd>(&mut self, fd: &Fd) -> Result<(), sys::Error<arch::sys_write>> {
+    pub fn flush_sync<Fd: AsFd>(&mut self, fd: &Fd) -> Result<(), WriteError> {
         while self.len != 0 {
             let bytes = unsafe { slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) };
             let write = sync_io::write(fd, bytes)?;

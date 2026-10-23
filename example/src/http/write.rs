@@ -4,8 +4,8 @@ use core::task::{Context, Poll, ready};
 use std::mem::MaybeUninit;
 
 use genos::fd::AsFd;
-use genos::{arch, sys};
 use seryu::bytes::BufMut;
+use seryu::error::WriteError;
 use seryu::h1;
 
 use crate::alloc::Page;
@@ -46,7 +46,7 @@ impl WriteBuf {
         &mut self,
         fd: &Fd,
         cx: &mut Context,
-    ) -> Poll<Result<(), sys::Error<arch::sys_write>>> {
+    ) -> Poll<Result<(), WriteError>> {
         let base = unsafe { self.ptr.as_ptr().sub(CAP - self.rem) };
         while let len = CAP - self.rem - self.off
             && len != 0

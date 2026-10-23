@@ -4,7 +4,7 @@ use core::slice;
 use core::task::{Context, Poll, ready};
 
 use genos::fd::AsFd;
-use genos::{arch, sys};
+use seryu::error::ReadError;
 use seryu::h1;
 
 use crate::error::Error;
@@ -77,7 +77,7 @@ impl ReadBuf {
         &mut self,
         fd: &Fd,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<bool, sys::Error<arch::sys_read>>> {
+    ) -> Poll<Result<bool, ReadError>> {
         let read = ready!(io::poll_read(fd, self.spare_mut(), cx))?;
         self.buf = NonNull::slice_from_raw_parts(self.buf.cast(), self.buf.len() + read);
         Poll::Ready(Ok(read == 0))
