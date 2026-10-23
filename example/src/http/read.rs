@@ -1,103 +1,85 @@
 use core::mem::MaybeUninit;
 use core::ptr::NonNull;
+use core::slice;
 use core::task::{Context, Poll, ready};
-use core::{fmt, slice};
 
 use genos::fd::AsFd;
 use genos::{arch, sys};
 use seryu::h1;
 
-use crate::alloc::Page;
-use crate::{Error, io};
+use crate::error::Error;
+use crate::http::request::{Request, RequestData};
+use crate::io;
 
 // ===== ReadBuf =====
 
-pub const CAP: usize = Page::SIZE;
+// #[size(4096)]
+// struct MemoryLayout {
+//     request: RequestData,
+//     bytes: [u8],
+// }
+
+pub const CAP: usize = 4096;
+pub const REQ_SIZE: usize = size_of::<RequestData>();
+pub const BYTES_SIZE: usize = CAP - REQ_SIZE;
 
 pub struct ReadBuf {
-    ptr: NonNull<u8>,
-    len: usize,
+    buf: NonNull<[u8]>,
     off: usize,
 }
 
 impl ReadBuf {
     pub unsafe fn from_raw(ptr: NonNull<u8>) -> Self {
-        Self { ptr, len: 0, off: 0 }
+        Self { buf: NonNull::slice_from_raw_parts(ptr, 0), off: 0 }
     }
 
-    pub fn len(&self) -> usize {
-        self.len
+    fn parts(&mut self) -> (&mut MaybeUninit<RequestData>, &mut [u8]) {
+        unsafe { (self.buf.cast().as_mut(), self.buf.byte_add(REQ_SIZE + self.off).as_mut()) }
+    }
+
+    fn reqdata_mut(&mut self) -> &mut RequestData {
+        unsafe { self.buf.cast().as_mut() }
+    }
+
+    pub fn parse_request(&mut self) -> Result<Option<Request>, Error> {
+        let (reqdata_mut, bytes) = self.parts();
+        let Some(bytes) = read_request(bytes) else {
+            return Ok(None);
+        };
+        RequestData::parse(bytes, reqdata_mut)?;
+        self.off += bytes.len();
+        Ok(Some(Request::new(self.reqdata_mut())))
     }
 }
 
+fn read_request(bytes: &mut [u8]) -> Option<&mut [u8]> {
+    let base = bytes.as_mut_ptr();
+
+    let mut bytes = &bytes[..];
+    while !h1::read_line(&mut bytes)?.is_empty() {}
+
+    let read = unsafe { bytes.as_ptr().offset_from_unsigned(base) };
+
+    Some(unsafe { slice::from_raw_parts_mut(base, read) })
+}
+
 impl ReadBuf {
+    fn spare_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+        // TODO: h1: request pipeline offset
+        unsafe {
+            let ptr = self.buf.as_ptr().byte_add(REQ_SIZE + self.buf.len()).cast();
+            slice::from_raw_parts_mut(ptr, BYTES_SIZE - self.off - self.buf.len())
+        }
+    }
+
     /// Returns `is_eof`.
     pub fn poll_read_fd<Fd: AsFd>(
         &mut self,
         fd: &Fd,
         cx: &mut Context<'_>,
     ) -> Poll<Result<bool, sys::Error<arch::sys_read>>> {
-        let buf = unsafe {
-            slice::from_raw_parts_mut(
-                self.ptr.as_ptr().add(self.len).cast(),
-                CAP - self.off - self.len,
-            )
-        };
-        let read = ready!(io::poll_read(fd, buf, cx))?;
-        self.len += read;
+        let read = ready!(io::poll_read(fd, self.spare_mut(), cx))?;
+        self.buf = NonNull::slice_from_raw_parts(self.buf.cast(), self.buf.len() + read);
         Poll::Ready(Ok(read == 0))
-    }
-
-    pub fn read_request(&mut self) -> Option<&[u8]> {
-        unsafe {
-            let mut bytes = slice::from_raw_parts(self.ptr.as_ptr(), self.len);
-            while !h1::read_line(&mut bytes)?.is_empty() {}
-            let read = bytes.as_ptr().offset_from_unsigned(self.ptr.as_ptr());
-            let line = slice::from_raw_parts(self.ptr.as_ptr(), read);
-            self.ptr = self.ptr.add(read);
-            self.len -= read;
-            self.off += read;
-            Some(line)
-        }
-    }
-}
-
-// ===== h1 =====
-
-pub type HeadersBuf<'a> = [MaybeUninit<h1::Field<'a>>; MAX_HEADERS as usize];
-
-const MAX_HEADERS: u32 = 24;
-
-pub fn parse_request<'a, 'h>(
-    mut bytes: &'a [u8],
-    reqline: &mut MaybeUninit<h1::RequestLine<'a>>,
-    headers: &'h mut HeadersBuf<'a>,
-) -> Result<&'h [h1::Field<'a>], Error> {
-    let Some(line) = h1::read_line(&mut bytes) else {
-        return Err(h1::ParseError::InsufficientBytes.into());
-    };
-    h1::parse_reqline(line, reqline)?;
-    let mut header_len = 0;
-    loop {
-        let Some(line) = h1::read_line(&mut bytes) else {
-            return Err(h1::ParseError::InsufficientBytes.into());
-        };
-        if line.is_empty() {
-            break;
-        }
-        let Some(header_mut) = headers.get_mut(header_len) else {
-            return Err(ExcessiveHeaders.into());
-        };
-        h1::parse_field(line, header_mut)?;
-        header_len += 1;
-    }
-    Ok(unsafe { headers.get_unchecked(..header_len).assume_init_ref() })
-}
-
-pub struct ExcessiveHeaders;
-
-impl fmt::Display for ExcessiveHeaders {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "excessive headers")
     }
 }

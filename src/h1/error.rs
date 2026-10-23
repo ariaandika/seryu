@@ -8,18 +8,24 @@ pub type Result<T, E = ParseError> = result::Result<T, E>;
 pub enum ParseError {
     /// Given bytes is not enough to complete parsing.
     InsufficientBytes,
+    /// Given bytes is too large.
+    ExcessiveBytes,
     /// Buffer has no remaining capacity left.
     InsufficientBuf,
     /// Invalid expected byte.
     InvalidByte,
+    /// Too many headers.
+    ExcessiveHeaders,
 }
 
 impl ParseError {
     const fn message(&self) -> &'static str {
         match self {
             Self::InsufficientBytes => "insufficient bytes",
+            Self::ExcessiveBytes => "excessive bytes",
             Self::InsufficientBuf => "insufficient buffer",
             Self::InvalidByte => "invalid expected byte",
+            Self::ExcessiveHeaders => "excessive headers",
         }
     }
 }

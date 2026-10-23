@@ -13,9 +13,9 @@ mod alloc;
 mod error;
 mod io;
 
-mod event;
 mod task;
 
+mod event;
 mod http;
 mod pg;
 
@@ -64,10 +64,9 @@ fn main() -> Result<(), Error> {
                     let fd_prop = fds.insert(&socket)?;
                     fd_prop.read = Some(WakerData::new(tasks.peek_id()));
 
-                    // store the task
+                    // create the task
                     let mem = mpool.alloc_page()?;
-                    let task = HttpTask::new(socket, mem)?;
-                    tasks.insert(task);
+                    tasks.insert(HttpTask::new(socket, mem));
                 }
                 None => {
                     let fd = ev.data as RawFd;
