@@ -1,5 +1,5 @@
-pub use brk::{init_brk, leak_slice};
+pub use mmap::{PAGE_SIZE, Result, array, free_array};
 pub use pool::{MemoryPool, Page};
 
-mod brk;
+mod mmap;
 mod pool;

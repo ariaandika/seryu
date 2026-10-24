@@ -20,25 +20,24 @@ mod http;
 mod pg;
 
 fn main() -> Result<(), Error> {
-    alloc::init_brk();
-
     // ===== os =====
 
     let _ = pg::connect();
     let listener = Listener::bind_tcp([127, 0, 0, 1], 4040)?;
     let epoll = Epoll::create(Epoll::CLOEXEC)?;
-    let mut fds = FdTable::new_static();
 
     Event::add_with(&epoll, &listener, Event::Listener)?;
-    fds.insert(&listener)?;
-    fds.insert(&epoll)?;
 
     // ===== data =====
 
     let mut mpool = MemoryPool::new()?;
-    let mut tasks = Tasks::new_static();
-    let mut queue = Queue::new_static();
-    let mut events = Events::new_static();
+    let mut tasks = Tasks::new()?;
+    let mut queue = Queue::new()?;
+    let mut events = Events::new()?;
+    let mut fds = FdTable::new()?;
+
+    fds.insert(&listener);
+    fds.insert(&epoll);
 
     loop {
         // ===== Event scheduling =====
@@ -61,7 +60,7 @@ fn main() -> Result<(), Error> {
                     epoll.add(&socket, Epoll::IN | Epoll::ET, fd as u64)?;
 
                     // register interest for the new task to the fd
-                    let fd_prop = fds.insert(&socket)?;
+                    let fd_prop = fds.insert(&socket);
                     fd_prop.read = Some(WakerData::new(tasks.peek_id()));
 
                     // create the task

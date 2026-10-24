@@ -7,17 +7,28 @@ use crate::alloc;
 
 // ===== Queue =====
 
-const CAP: usize = 64;
+const SIZE: usize = alloc::PAGE_SIZE;
+const CAP: usize = SIZE / 8;
 
 pub struct Queue<T> {
-    buf: NonNull<T>,
+    buf: NonNull<[T; CAP]>,
     len: usize,
 }
 
+impl<T> Drop for Queue<T> {
+    fn drop(&mut self) {
+        alloc::free_array(self.buf);
+    }
+}
+
 impl<T> Queue<T> {
-    pub fn new_static() -> Self {
+    pub fn new() -> alloc::Result<Self> {
         const { assert!(!mem::needs_drop::<T>()) }
-        Self { buf: alloc::leak_slice(CAP), len: 0 }
+        alloc::array().map(|buf| Self { buf, len: 0 })
+    }
+
+    fn as_ptr(&mut self) -> *mut T {
+        self.buf.as_ptr().cast()
     }
 
     pub fn push(&mut self, task: T) -> Result<(), InsertError<T>> {
@@ -25,7 +36,7 @@ impl<T> Queue<T> {
             return Err(InsertError::new(task));
         }
 
-        unsafe { self.buf.add(self.len).write(task) };
+        unsafe { self.as_ptr().add(self.len).write(task) };
         self.len += 1;
 
         Ok(())
@@ -37,10 +48,8 @@ impl<T> Queue<T> {
     {
         let len = self.len;
         self.len = 0;
-        unsafe {
-            slice::from_raw_parts(self.buf.as_ptr(), len)
-                .iter()
-                .copied()
-        }
+        unsafe { slice::from_raw_parts(self.as_ptr(), len) }
+            .iter()
+            .copied()
     }
 }

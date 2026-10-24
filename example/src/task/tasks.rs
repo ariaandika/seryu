@@ -8,12 +8,8 @@ use crate::alloc;
 pub struct TaskId(u32);
 
 impl TaskId {
-    pub(super) fn new(id: u32) -> Self {
-        Self(id)
-    }
-
-    pub(super) fn raw(self) -> u32 {
-        self.0
+    fn from_idx(idx: usize) -> Self {
+        Self(idx.try_into().unwrap())
     }
 }
 
@@ -25,29 +21,31 @@ pub struct Tasks<T> {
     buf: Slab<T>,
 }
 
+impl<T> Drop for Tasks<T> {
+    fn drop(&mut self) {
+        alloc::free_array::<T, CAP>(self.buf.as_non_null().cast());
+    }
+}
+
 impl<T> Tasks<T> {
-    pub fn new_static() -> Self {
-        let ptr = alloc::leak_slice::<T>(512).as_ptr().cast();
-        let buf = unsafe { Slab::from_buf(ptr, CAP * size_of::<T>()) };
-        Self { buf }
+    pub fn new() -> alloc::Result<Self> {
+        let ptr = alloc::array::<T, CAP>()?.as_ptr().cast();
+        Ok(Self { buf: unsafe { Slab::from_buf(ptr, size_of::<[T; CAP]>()) } })
     }
 
     pub fn peek_id(&self) -> TaskId {
-        TaskId::new(self.buf.peek_key().try_into().unwrap())
+        TaskId::from_idx(self.buf.peek_key())
     }
 
     pub fn insert(&mut self, task: T) -> TaskId {
-        self.buf
-            .insert(task)
-            .map(|id| TaskId::new(id.try_into().unwrap()))
-            .unwrap()
+        self.buf.insert(task).map(TaskId::from_idx).unwrap()
     }
 
     pub fn get_mut(&mut self, id: TaskId) -> Option<&mut T> {
-        self.buf.get_mut(id.raw() as usize)
+        self.buf.get_mut(id.0 as usize)
     }
 
     pub fn remove(&mut self, id: TaskId) -> Option<T> {
-        self.buf.remove(id.raw() as usize)
+        self.buf.remove(id.0 as usize)
     }
 }

@@ -40,6 +40,11 @@ impl<T> Slab<T> {
     }
 
     #[inline]
+    pub const fn as_non_null(&mut self) -> NonNull<u8> {
+        self.entry.cast()
+    }
+
+    #[inline]
     pub const fn peek_key(&self) -> usize {
         self.last_remove
     }

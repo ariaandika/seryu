@@ -13,6 +13,8 @@ use crate::error::Error;
 use crate::pg::read::ReadBuf;
 use crate::pg::write::WriteBuf;
 
+const CAP: usize = ReadBuf::CAPACITY + WriteBuf::CAPACITY;
+
 pub struct Postgres {
     socket: Socket,
     read_buf: ReadBuf,
@@ -44,7 +46,7 @@ impl Postgres {
         socket.connect(addr, addrlen)?;
 
         // allocate message buffer
-        let ptr = alloc::leak_slice(ReadBuf::CAPACITY + WriteBuf::CAPACITY);
+        let ptr = alloc::array::<u8, CAP>()?.cast();
         let read_buf = unsafe { ReadBuf::from_raw(ptr) };
         let write_buf = unsafe { WriteBuf::from_raw(ptr.add(ReadBuf::CAPACITY)) };
         Ok(Self { socket, read_buf, write_buf })

@@ -38,28 +38,37 @@ impl Event {
 const CAP: usize = 255;
 
 pub struct Events {
-    buf: NonNull<epoll::Event>,
+    buf: NonNull<[epoll::Event; CAP]>,
     len: usize,
     off: usize,
 }
 
+impl Drop for Events {
+    fn drop(&mut self) {
+        alloc::free_array(self.buf);
+    }
+}
+
 impl Events {
-    pub fn new_static() -> Self {
-        let buf = alloc::leak_slice(CAP);
-        Events { buf, len: 0, off: 0 }
+    pub fn new() -> alloc::Result<Self> {
+        alloc::array().map(|buf| Events { buf, len: 0, off: 0 })
+    }
+
+    fn as_ptr(&mut self) -> *mut epoll::Event {
+        self.buf.as_ptr().cast()
     }
 
     pub fn pop(&mut self) -> Option<&epoll::Event> {
         if self.off == self.len {
             return None;
         }
-        let ptr = unsafe { self.buf.add(self.off) };
+        let ptr = unsafe { self.as_ptr().add(self.off) };
         self.off += 1;
-        Some(unsafe { ptr.cast::<epoll::Event>().as_ref() })
+        Some(unsafe { &*ptr.cast::<epoll::Event>() })
     }
 
     pub fn wait(&mut self, epoll: &Epoll) -> Result<(), sys::Error<arch::sys_epoll_wait>> {
-        let buf = unsafe { slice::from_raw_parts_mut(self.buf.as_ptr().cast(), CAP) };
+        let buf = unsafe { slice::from_raw_parts_mut(self.as_ptr().cast(), CAP) };
         self.len = epoll.wait(buf, -1)?;
         self.off = 0;
         Ok(())

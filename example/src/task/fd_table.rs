@@ -1,7 +1,6 @@
 use core::ptr::NonNull;
 
 use genos::fd::{AsFd, BorrowedFd, RawFd};
-use seryu::alloc::slab::InsertError;
 
 use crate::alloc;
 use crate::task::WakerData;
@@ -29,37 +28,32 @@ impl AsFd for FdProp {
 
 // ===== FdTable =====
 
-const CAP: usize = 64;
+const CAP: usize = alloc::PAGE_SIZE / size_of::<FdProp>();
 const FD_OFF: i32 = 3/*std stream*/;
 
 pub struct FdTable {
-    ptr: NonNull<FdProp>,
+    buf: NonNull<[FdProp; CAP]>,
+}
+
+impl Drop for FdTable {
+    fn drop(&mut self) {
+        alloc::free_array(self.buf);
+    }
 }
 
 impl FdTable {
-    pub fn new_static() -> Self {
-        Self { ptr: alloc::leak_slice::<FdProp>(CAP) }
+    pub fn new() -> alloc::Result<Self> {
+        alloc::array().map(|buf| Self { buf })
+    }
+
+    fn as_mut_ptr(&mut self) -> NonNull<FdProp> {
+        self.buf.cast()
     }
 
     pub fn get_mut(&mut self, fd: RawFd) -> &mut FdProp {
         let idx = fd.strict_sub(FD_OFF) as usize;
-        if idx >= CAP {
-            panic!("`FdTable::get_mut` out of bounds");
-        }
-        unsafe { self.ptr.add(idx).as_mut() }
-    }
-
-    pub fn insert<'a, Fd: AsFd>(&'a mut self, fd: &Fd) -> Result<&'a mut FdProp, InsertError<()>> {
-        let fd = fd.as_raw_fd();
-        let idx = fd.strict_sub(FD_OFF) as usize;
-        if idx >= CAP {
-            return Err(InsertError::new(()));
-        }
-        unsafe {
-            let mut ptr = self.ptr.add(idx);
-            ptr.write(FdProp::new(fd));
-            Ok(ptr.as_mut())
-        }
+        assert!(idx < CAP, "FdProp out of bounds");
+        unsafe { self.as_mut_ptr().add(idx).as_mut() }
     }
 
     pub fn register_read<Fd: AsFd + ?Sized>(&mut self, fd: &Fd, waker: WakerData) {
@@ -69,6 +63,19 @@ impl FdTable {
 
     pub fn register_write<Fd: AsFd + ?Sized>(&mut self, fd: &Fd, waker: WakerData) {
         self.get_mut(fd.as_raw_fd()).write = Some(waker);
+    }
+}
+
+impl FdTable {
+    pub fn insert<'a, Fd: AsFd>(&'a mut self, fd: &Fd) -> &'a mut FdProp {
+        let fd = fd.as_raw_fd();
+        let idx = fd.strict_sub(FD_OFF) as usize;
+        assert!(idx < CAP, "FdProp out of bounds");
+        unsafe {
+            let mut ptr = self.as_mut_ptr().add(idx);
+            ptr.write(FdProp::new(fd));
+            ptr.as_mut()
+        }
     }
 
     pub fn remove(&mut self, _fd: RawFd) {
