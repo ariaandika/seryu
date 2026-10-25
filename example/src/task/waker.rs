@@ -22,18 +22,9 @@ impl WakerData {
         ptr::addr_eq(waker.vtable() as *const _, &raw const VTABLE)
     }
 
-    pub fn from_waker(waker: &Waker) -> &Self {
-        assert!(Self::is(waker));
-        unsafe { &*waker.data().cast() }
-    }
-
-    pub fn id(&self) -> TaskId {
-        self.id
-    }
-
     /// # Safety
     ///
-    /// `self` must not be moved.
+    /// `self` must not be moved for the lifetime of the returned waker.
     pub unsafe fn create_waker(&self) -> Waker {
         unsafe { Waker::new(self as *const _ as *const _, &VTABLE) }
     }

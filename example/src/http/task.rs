@@ -7,6 +7,7 @@ use crate::error::Error;
 use crate::http::read::ReadBuf;
 use crate::http::request::Request;
 use crate::http::write::{self, WriteBuf};
+use crate::task::{Task, WithTask};
 
 // ===== Handler =====
 
@@ -26,8 +27,9 @@ pub fn request_handler(request: Request) {
 pub type TaskPage = Page<4>;
 
 pub struct HttpTask {
-    // protocol states
+    // states
     phase: Phase,
+    task: Task,
 
     // memory buffer
     read_buf: ReadBuf,
@@ -51,7 +53,17 @@ impl HttpTask {
         let base = page.as_ptr();
         let read_buf = unsafe { ReadBuf::from_raw(base) };
         let write_buf = unsafe { WriteBuf::from_raw(base.add(Page::SIZE)) };
-        Self { phase: Phase::ReadRequest, read_buf, write_buf, page, socket }
+        Self { task: Task::RD, phase: Phase::ReadRequest, read_buf, write_buf, page, socket }
+    }
+}
+
+impl WithTask for HttpTask {
+    fn state(&self) -> Task {
+        self.task
+    }
+
+    fn set_state(&mut self, state: Task) {
+        self.task = state;
     }
 }
 

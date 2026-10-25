@@ -1,17 +1,7 @@
 use seryu::alloc::Slab;
 
 use crate::alloc;
-
-// ===== TaskId =====
-
-#[derive(Debug, Clone, Copy)]
-pub struct TaskId(u32);
-
-impl TaskId {
-    fn from_idx(idx: usize) -> Self {
-        Self(idx.try_into().unwrap())
-    }
-}
+use crate::task::TaskId;
 
 // ===== Tasks =====
 
@@ -42,10 +32,10 @@ impl<T> Tasks<T> {
     }
 
     pub fn get_mut(&mut self, id: TaskId) -> Option<&mut T> {
-        self.buf.get_mut(id.0 as usize)
+        self.buf.get_mut(id.to_idx())
     }
 
     pub fn remove(&mut self, id: TaskId) -> Option<T> {
-        self.buf.remove(id.0 as usize)
+        self.buf.remove(id.to_idx())
     }
 }

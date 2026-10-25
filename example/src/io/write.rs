@@ -15,7 +15,7 @@ pub fn poll_write<Fd: AsFd + ?Sized>(
         Ok(read) => Poll::Ready(Ok(read)),
         Err(err) => {
             if err.code().is_retry() {
-                cx.register_write(fd);
+                cx.register_task_write();
                 Poll::Pending
             } else {
                 Poll::Ready(Err(err))

@@ -1,11 +1,12 @@
-use core::ptr::NonNull;
 use core::mem;
+use core::ptr::NonNull;
 
 use genos::event::epoll::{self, Epoll};
-use genos::fd::{AsFd, BorrowedFd};
+use genos::fd::AsFd;
 use genos::{arch, sys};
 
 use crate::alloc;
+use crate::task::TaskId;
 
 // ===== EventData =====
 
@@ -29,12 +30,12 @@ impl EventData for u64 {
 
 /// Event data.
 #[derive(Clone, Copy)]
-pub enum EventKind<'a> {
+pub enum EventKind {
     Listener,
-    Client(BorrowedFd<'a>),
+    Client(TaskId),
 }
 
-impl EventData for EventKind<'_> {
+impl EventData for EventKind {
     fn from_data(data: u64) -> Self {
         unsafe { mem::transmute(data) }
     }

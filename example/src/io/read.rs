@@ -16,7 +16,7 @@ pub fn poll_read<'a, Fd: AsFd + ?Sized>(
         Ok(read) => Poll::Ready(Ok(read)),
         Err(err) => {
             if err.code().is_retry() {
-                cx.register_read(fd);
+                cx.register_task_read();
                 Poll::Pending
             } else {
                 Poll::Ready(Err(err))

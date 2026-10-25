@@ -1,13 +1,12 @@
 #![allow(clippy::module_inception)]
 use genos::event::Epoll;
-use genos::fd::AsFd;
 use seryu::os::Listener;
 
 use crate::alloc::MemoryPool;
 use crate::error::Error;
 use crate::event::{EventKind, Events};
 use crate::http::HttpTask;
-use crate::task::{ContextData, FdTable, Queue, Tasks, WakerData};
+use crate::task::{ContextData, Queue, Task, Tasks, WakerData, WithTask};
 
 mod alloc;
 mod error;
@@ -32,10 +31,7 @@ fn main() -> Result<(), Error> {
     let mut tasks = Tasks::new()?;
     let mut queue = Queue::new()?;
     let mut events = Events::new()?;
-    let mut fds = FdTable::new()?;
 
-    fds.insert(&listener);
-    fds.insert(&epoll);
     events.add(&listener, EventKind::Listener, &epoll)?;
 
     loop {
@@ -56,31 +52,34 @@ fn main() -> Result<(), Error> {
                     };
 
                     // register socket to epoll
-                    let data = EventKind::Client(socket.as_fd());
+                    let data = EventKind::Client(tasks.peek_id());
                     events.add(&socket, data, &epoll).unwrap();
 
-                    // register interest for the new task to the socket
-                    let fd_prop = fds.insert(&socket);
-                    fd_prop.read = Some(WakerData::new(tasks.peek_id()));
-
                     // create the task
-                    let mem = mpool.alloc_page()?;
+                    let mem = mpool.alloc_page().unwrap();
                     tasks.insert(HttpTask::new(socket, mem));
                 }
-                EventKind::Client(fd) => {
-                    let prop = fds.get_mut(fd.as_raw_fd());
+                EventKind::Client(task_id) => {
+                    let Some(task) = tasks.get_mut(task_id) else {
+                        continue;
+                    };
 
-                    if ev & Epoll::IN == Epoll::IN
-                        && let Some(waker) = prop.read.take()
-                    {
-                        queue.push(waker.id()).unwrap();
+                    let state = task.state();
+                    if state.has(Task::QUEUE) {
+                        // prevent double queues
+                        continue;
                     }
 
-                    if ev & Epoll::OUT == Epoll::OUT
-                        && let Some(waker) = prop.write.take()
-                    {
-                        queue.push(waker.id()).unwrap();
+                    let want_rd = state.has(Task::RD) & (ev & Epoll::IN == Epoll::IN);
+                    let want_wr = state.has(Task::WR) & (ev & Epoll::OUT == Epoll::OUT);
+
+                    if !(want_rd | want_wr) {
+                        // prevent spurious wake up
+                        continue;
                     }
+
+                    queue.push(task_id).unwrap();
+                    task.set_state(state.unset(Task::RD | Task::WR) | Task::QUEUE);
                 }
             }
         }
@@ -92,13 +91,19 @@ fn main() -> Result<(), Error> {
                 // dangling task id in scheduler
                 continue;
             };
+            task.set_state(task.state().unset(Task::QUEUE));
 
-            // make sure to not borrow `shared` before `poll()`
             let waker_data = WakerData::new(id);
-            // SAFETY: `waker_data` does not move
             let waker = unsafe { waker_data.create_waker() };
-            let mut cx = ContextData::new(&waker, &mut fds);
-            if task.poll(cx.as_mut_context()).is_pending() {
+            let mut cx = ContextData::new(&waker);
+            let res = task.poll(cx.as_mut_context());
+
+            // io polling will assign interest in task state stored in context
+            task.set_state(task.state() | cx.state());
+
+            // TODO: sync write interest with epoll interest
+
+            if res.is_pending() {
                 continue;
             }
 
@@ -106,8 +111,6 @@ fn main() -> Result<(), Error> {
 
             let task = tasks.remove(id).unwrap();
             epoll.delete(&task.socket)?;
-            fds.remove(task.socket.as_raw_fd());
-
             mpool.release(task.page);
         }
 
