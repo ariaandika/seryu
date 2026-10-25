@@ -1,41 +1,52 @@
 use core::ptr::NonNull;
-use core::slice;
+use core::mem;
 
 use genos::event::epoll::{self, Epoll};
-use genos::fd::AsFd;
+use genos::fd::{AsFd, BorrowedFd};
 use genos::{arch, sys};
 
 use crate::alloc;
 
-// ===== Event =====
+// ===== EventData =====
 
-/// Mark special event.
-const EV_FLAG: u64 = !(u64::MAX >> 1);
+pub trait EventData: Sized {
+    fn from_data(data: u64) -> Self;
 
-/// A special os event.
-///
-/// This event may have special treatment than arbitrary os event.
-pub enum Event {
-    Listener,
+    fn into_data(self) -> u64;
 }
 
-impl Event {
-    pub fn from_epoll(event: &epoll::Event) -> Option<Self> {
-        if event.data & EV_FLAG == EV_FLAG { Some(Self::Listener) } else { None }
+impl EventData for u64 {
+    fn from_data(data: u64) -> Self {
+        data
     }
 
-    pub fn add_with<Fd: AsFd>(
-        epoll: &Epoll,
-        listener: &Fd,
-        event: Self,
-    ) -> Result<(), sys::Error<arch::sys_epoll_ctl>> {
-        epoll.add(listener, Epoll::IN | Epoll::ET, event as u64 | EV_FLAG)
+    fn into_data(self) -> u64 {
+        self
+    }
+}
+
+// ===== EventKind =====
+
+/// Event data.
+#[derive(Clone, Copy)]
+pub enum EventKind<'a> {
+    Listener,
+    Client(BorrowedFd<'a>),
+}
+
+impl EventData for EventKind<'_> {
+    fn from_data(data: u64) -> Self {
+        unsafe { mem::transmute(data) }
+    }
+
+    fn into_data(self) -> u64 {
+        unsafe { mem::transmute(self) }
     }
 }
 
 // ===== Events =====
 
-const CAP: usize = 255;
+const CAP: usize = alloc::PAGE_SIZE / size_of::<epoll::Event>();
 
 pub struct Events {
     buf: NonNull<[epoll::Event; CAP]>,
@@ -54,21 +65,26 @@ impl Events {
         alloc::array().map(|buf| Events { buf, len: 0, off: 0 })
     }
 
-    fn as_ptr(&mut self) -> *mut epoll::Event {
-        self.buf.as_ptr().cast()
+    pub fn add<Fd: AsFd, D: EventData>(
+        &self,
+        fd: &Fd,
+        data: D,
+        epoll: &Epoll,
+    ) -> Result<(), sys::Error<arch::sys_epoll_ctl>> {
+        epoll.add(fd, Epoll::IN | Epoll::ET, data.into_data())
     }
 
-    pub fn pop(&mut self) -> Option<&epoll::Event> {
+    pub fn pop<D: EventData>(&mut self) -> Option<(epoll::EventType, D)> {
         if self.off == self.len {
             return None;
         }
-        let ptr = unsafe { self.as_ptr().add(self.off) };
+        let ev = unsafe { self.buf.cast::<epoll::Event>().add(self.off).as_ref() };
         self.off += 1;
-        Some(unsafe { &*ptr.cast::<epoll::Event>() })
+        Some((ev.events, D::from_data(ev.data)))
     }
 
     pub fn wait(&mut self, epoll: &Epoll) -> Result<(), sys::Error<arch::sys_epoll_wait>> {
-        let buf = unsafe { slice::from_raw_parts_mut(self.as_ptr().cast(), CAP) };
+        let buf = unsafe { self.buf.cast::<[_; CAP]>().as_mut() };
         self.len = epoll.wait(buf, -1)?;
         self.off = 0;
         Ok(())

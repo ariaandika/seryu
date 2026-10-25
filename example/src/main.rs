@@ -1,11 +1,11 @@
 #![allow(clippy::module_inception)]
 use genos::event::Epoll;
-use genos::fd::{AsFd, RawFd};
+use genos::fd::AsFd;
 use seryu::os::Listener;
 
 use crate::alloc::MemoryPool;
 use crate::error::Error;
-use crate::event::{Event, Events};
+use crate::event::{EventKind, Events};
 use crate::http::HttpTask;
 use crate::task::{ContextData, FdTable, Queue, Tasks, WakerData};
 
@@ -26,8 +26,6 @@ fn main() -> Result<(), Error> {
     let listener = Listener::bind_tcp([127, 0, 0, 1], 4040)?;
     let epoll = Epoll::create(Epoll::CLOEXEC)?;
 
-    Event::add_with(&epoll, &listener, Event::Listener)?;
-
     // ===== data =====
 
     let mut mpool = MemoryPool::new()?;
@@ -38,12 +36,14 @@ fn main() -> Result<(), Error> {
 
     fds.insert(&listener);
     fds.insert(&epoll);
+    events.add(&listener, EventKind::Listener, &epoll)?;
 
     loop {
         // ===== Event scheduling =====
-        while let Some(ev) = events.pop() {
-            match Event::from_epoll(ev) {
-                Some(Event::Listener) => {
+        while let Some((ev, data)) = events.pop() {
+            match data {
+                EventKind::Listener => {
+                    // accept socket
                     let socket = match listener.accept() {
                         Ok(ok) => ok,
                         Err(err) => {
@@ -55,11 +55,11 @@ fn main() -> Result<(), Error> {
                         }
                     };
 
-                    // register fd to epoll
-                    let fd = socket.as_raw_fd();
-                    epoll.add(&socket, Epoll::IN | Epoll::ET, fd as u64)?;
+                    // register socket to epoll
+                    let data = EventKind::Client(socket.as_fd());
+                    events.add(&socket, data, &epoll).unwrap();
 
-                    // register interest for the new task to the fd
+                    // register interest for the new task to the socket
                     let fd_prop = fds.insert(&socket);
                     fd_prop.read = Some(WakerData::new(tasks.peek_id()));
 
@@ -67,17 +67,16 @@ fn main() -> Result<(), Error> {
                     let mem = mpool.alloc_page()?;
                     tasks.insert(HttpTask::new(socket, mem));
                 }
-                None => {
-                    let fd = ev.data as RawFd;
-                    let prop = fds.get_mut(fd);
+                EventKind::Client(fd) => {
+                    let prop = fds.get_mut(fd.as_raw_fd());
 
-                    if ev.events & Epoll::IN == Epoll::IN
+                    if ev & Epoll::IN == Epoll::IN
                         && let Some(waker) = prop.read.take()
                     {
                         queue.push(waker.id()).unwrap();
                     }
 
-                    if ev.events & Epoll::OUT == Epoll::OUT
+                    if ev & Epoll::OUT == Epoll::OUT
                         && let Some(waker) = prop.write.take()
                     {
                         queue.push(waker.id()).unwrap();
