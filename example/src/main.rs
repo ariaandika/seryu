@@ -4,7 +4,7 @@ use seryu::os::Listener;
 
 use crate::alloc::MemoryPool;
 use crate::error::Error;
-use crate::event::{EventKind, Events};
+use crate::event::{EventBuf, EventKind, EventSource};
 use crate::http::HttpTask;
 use crate::task::{ContextData, Queue, Task, Tasks, WakerData, WithTask};
 
@@ -19,24 +19,30 @@ mod http;
 mod pg;
 
 fn main() -> Result<(), Error> {
+    let _ = pg::connect();
+
     // ===== os =====
 
-    let _ = pg::connect();
     let listener = Listener::bind_tcp([127, 0, 0, 1], 4040)?;
-    let epoll = Epoll::create(Epoll::CLOEXEC)?;
+    let event_source = EventSource::new()?;
+
+    event_source.add(&listener, EventKind::Listener)?;
 
     // ===== data =====
 
     let mut mpool = MemoryPool::new()?;
     let mut tasks = Tasks::new()?;
     let mut queue = Queue::new()?;
-    let mut events = Events::new()?;
-
-    events.add(&listener, EventKind::Listener, &epoll)?;
+    let mut events = EventBuf::new()?;
 
     loop {
-        // ===== Event scheduling =====
-        while let Some((ev, data)) = events.pop() {
+        // ===== Wait for Events =====
+
+        let events = event_source.wait(&mut *events)?;
+
+        // ===== Event Scheduling =====
+
+        for (ev, data) in events {
             match data {
                 EventKind::Listener => {
                     // accept socket
@@ -52,11 +58,12 @@ fn main() -> Result<(), Error> {
                     };
 
                     // register socket to epoll
-                    let data = EventKind::Client(tasks.peek_id());
-                    events.add(&socket, data, &epoll).unwrap();
+                    event_source.add(&socket, EventKind::Client(tasks.peek_id()))?;
+
+                    // allocate memory
+                    let mem = mpool.alloc_page()?;
 
                     // create the task
-                    let mem = mpool.alloc_page().unwrap();
                     tasks.insert(HttpTask::new(socket, mem));
                 }
                 EventKind::Client(task_id) => {
@@ -84,7 +91,7 @@ fn main() -> Result<(), Error> {
             }
         }
 
-        // ===== Task execution =====
+        // ===== Task Execution =====
 
         for id in queue.drain() {
             let Some(task) = tasks.get_mut(id) else {
@@ -110,12 +117,8 @@ fn main() -> Result<(), Error> {
             // ===== task deallocation =====
 
             let task = tasks.remove(id).unwrap();
-            epoll.delete(&task.socket)?;
+            event_source.delete(&task.socket)?;
             mpool.release(task.page);
         }
-
-        // ===== Wait for events =====
-
-        events.wait(&epoll)?;
     }
 }
