@@ -67,7 +67,7 @@ impl ReadBuf {
     fn spare_mut(&mut self) -> &mut [MaybeUninit<u8>] {
         // TODO: h1: request pipeline offset
         unsafe {
-            let ptr = self.buf.as_ptr().byte_add(REQ_SIZE + self.buf.len()).cast();
+            let ptr = self.buf.as_ptr().byte_add(REQ_SIZE + self.off + self.buf.len()).cast();
             slice::from_raw_parts_mut(ptr, BYTES_SIZE - self.off - self.buf.len())
         }
     }
