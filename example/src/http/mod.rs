@@ -1,8 +1,18 @@
-pub use task::HttpTask;
+pub use pool::{MemoryPool, Page};
+pub use client::ClientTask;
+pub use server::ServerTask;
+
+// ===== protocol =====
 
 mod request;
 
+// ===== memory =====
+
+mod pool;
 mod read;
 mod write;
 
-mod task;
+// ===== tasks =====
+
+mod server;
+mod client;

@@ -1,15 +1,16 @@
+use core::mem::MaybeUninit;
 use core::ptr::NonNull;
 use core::slice;
 use core::task::{Context, Poll, ready};
-use std::mem::MaybeUninit;
 
 use genos::fd::AsFd;
 use seryu::bytes::BufMut;
 use seryu::error::WriteError;
 use seryu::h1;
 
-use crate::alloc::Page;
-use crate::{Error, io};
+use crate::error::Error;
+use crate::http::Page;
+use crate::io;
 
 // ===== ReadBuf =====
 
@@ -22,8 +23,8 @@ pub struct WriteBuf {
 }
 
 impl WriteBuf {
-    pub unsafe fn from_raw(ptr: NonNull<u8>) -> Self {
-        Self { ptr, rem: CAP, off: 0 }
+    pub fn from_raw(page: Page) -> Self {
+        Self { ptr: page.as_ptr(), rem: CAP, off: 0 }
     }
 
     fn spare(&mut self) -> &mut [MaybeUninit<u8>] {
@@ -36,7 +37,7 @@ impl WriteBuf {
         self.rem -= len;
     }
 
-    pub fn clear(&mut self) {
+    fn clear(&mut self) {
         self.ptr = unsafe { self.ptr.sub(CAP - self.rem) };
         self.rem = CAP;
         self.off = 0;
@@ -54,6 +55,7 @@ impl WriteBuf {
             let buf = unsafe { slice::from_raw_parts(base, len) };
             self.off += ready!(io::poll_write(fd, buf, cx))?;
         }
+        self.clear();
         Poll::Ready(Ok(()))
     }
 }

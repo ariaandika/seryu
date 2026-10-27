@@ -1,15 +1,16 @@
 use core::mem::MaybeUninit;
 use core::ptr::NonNull;
 use core::slice;
-use core::task::{Context, Poll, ready};
+use core::task::Poll;
 
 use genos::fd::AsFd;
+use genos::io;
 use seryu::error::ReadError;
 use seryu::h1;
 
 use crate::error::Error;
+use crate::http::Page;
 use crate::http::request::{Request, RequestData};
-use crate::io;
 
 // ===== ReadBuf =====
 
@@ -29,16 +30,29 @@ pub struct ReadBuf {
 }
 
 impl ReadBuf {
-    pub unsafe fn from_raw(ptr: NonNull<u8>) -> Self {
+    pub fn from_raw(page: Page) -> Self {
+        let ptr = page.as_ptr();
         Self { buf: NonNull::slice_from_raw_parts(ptr, 0), off: 0 }
+    }
+
+    fn reqdata_mut(&mut self) -> &mut RequestData {
+        unsafe { self.buf.cast().as_mut() }
     }
 
     fn parts(&mut self) -> (&mut MaybeUninit<RequestData>, &mut [u8]) {
         unsafe { (self.buf.cast().as_mut(), self.buf.byte_add(REQ_SIZE + self.off).as_mut()) }
     }
 
-    fn reqdata_mut(&mut self) -> &mut RequestData {
-        unsafe { self.buf.cast().as_mut() }
+    fn spare_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+        // TODO: h1: request pipeline offset
+        unsafe {
+            let ptr = self
+                .buf
+                .as_ptr()
+                .byte_add(REQ_SIZE + self.off + self.buf.len())
+                .cast();
+            slice::from_raw_parts_mut(ptr, BYTES_SIZE - self.off - self.buf.len())
+        }
     }
 
     pub fn parse_request(&mut self) -> Result<Option<Request>, Error> {
@@ -64,22 +78,20 @@ fn read_request(bytes: &mut [u8]) -> Option<&mut [u8]> {
 }
 
 impl ReadBuf {
-    fn spare_mut(&mut self) -> &mut [MaybeUninit<u8>] {
-        // TODO: h1: request pipeline offset
-        unsafe {
-            let ptr = self.buf.as_ptr().byte_add(REQ_SIZE + self.off + self.buf.len()).cast();
-            slice::from_raw_parts_mut(ptr, BYTES_SIZE - self.off - self.buf.len())
-        }
-    }
-
     /// Returns `is_eof`.
-    pub fn poll_read_fd<Fd: AsFd>(
-        &mut self,
-        fd: &Fd,
-        cx: &mut Context<'_>,
-    ) -> Poll<Result<bool, ReadError>> {
-        let read = ready!(io::poll_read(fd, self.spare_mut(), cx))?;
-        self.buf = NonNull::slice_from_raw_parts(self.buf.cast(), self.buf.len() + read);
-        Poll::Ready(Ok(read == 0))
+    pub fn poll_read_fd<Fd: AsFd>(&mut self, fd: &Fd) -> Poll<Result<bool, ReadError>> {
+        match io::read(fd, self.spare_mut()) {
+            Ok(read) => {
+                self.buf = NonNull::slice_from_raw_parts(self.buf.cast(), self.buf.len() + read);
+                Poll::Ready(Ok(read == 0))
+            }
+            Err(err) => {
+                if err.code().is_retry() {
+                    Poll::Pending
+                } else {
+                    Poll::Ready(Err(err))
+                }
+            }
+        }
     }
 }

@@ -1,5 +1,6 @@
 use genos::fd::{AsFd, BorrowedFd};
 use genos::net::{SockAddrIn, Socket, opt};
+use genos::{arch, sys};
 
 use crate::error::IoError;
 
@@ -33,9 +34,8 @@ impl Listener {
     }
 
     #[inline]
-    pub fn accept(&self) -> Result<Socket, IoError> {
+    pub fn accept(&self) -> Result<Socket, sys::Error<arch::sys_accept4>> {
         self.socket
             .accept(None, None, Socket::CLOEXEC | Socket::NONBLOCK)
-            .map_err(<_>::into)
     }
 }

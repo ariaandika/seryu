@@ -1,3 +1,5 @@
+use core::array;
+use core::mem::MaybeUninit;
 use core::ptr::NonNull;
 
 use genos::mem;
@@ -20,13 +22,21 @@ impl<const N: usize> Page<N> {
     pub const fn as_ptr(&self) -> NonNull<u8> {
         self.0.cast()
     }
+
+    pub fn split(self) -> [Page; N] {
+        array::from_fn(|n| unsafe { Page(self.0.add(n)) })
+    }
+
+    pub fn as_mut_slice(&mut self) -> &mut [MaybeUninit<u8>; 4096] {
+        unsafe { self.0.cast().as_mut() }
+    }
 }
 
 // ===== MemoryPool =====
 
 type Bitmap = u64;
 
-const PAGE_SCALE: usize = 4;
+const PAGE_SCALE: usize = 2;
 const PAGE_CHUNK: usize = PAGE_SIZE * PAGE_SCALE;
 
 const POOL_CAP: usize = 8;
@@ -64,8 +74,8 @@ impl MemoryPool {
         Ok(Page(unsafe { self.base.add(PAGE_CHUNK * idx).cast() }))
     }
 
-    pub fn release<const N: usize>(&mut self, page: Page<N>) {
-        let idx = unsafe { page.as_ptr().offset_from_unsigned(self.base) } / PAGE_CHUNK;
+    pub fn release(&mut self, ptr: NonNull<u8>) {
+        let idx = unsafe { ptr.offset_from_unsigned(self.base) } / PAGE_CHUNK;
         self.bitmap |= 1 << idx;
     }
 }

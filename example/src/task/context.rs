@@ -36,10 +36,6 @@ impl<'a> ContextData<'a> {
         Self { waker, state: Task::EMPTY }
     }
 
-    pub fn state(&self) -> Task {
-        self.state
-    }
-
     pub fn as_mut_context(&mut self) -> &mut Context<'a> {
         unsafe { &mut *(self as *mut _ as *mut _) }
     }

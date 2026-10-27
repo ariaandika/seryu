@@ -1,13 +1,14 @@
+use core::ptr::NonNull;
 use core::task::{Context, Poll, ready};
 
 use genos::net::Socket;
 
-use crate::alloc::Page;
 use crate::error::Error;
+use crate::http::Page;
 use crate::http::read::ReadBuf;
 use crate::http::request::Request;
 use crate::http::write::{self, WriteBuf};
-use crate::task::{Task, WithTask};
+use crate::task::Task;
 
 // ===== Handler =====
 
@@ -24,22 +25,20 @@ pub fn request_handler(request: Request) {
 
 // ===== Task =====
 
-pub type TaskPage = Page<4>;
+pub type TaskPage = Page<2>;
 
-pub struct HttpTask {
+pub struct ClientTask {
     // states
     phase: Phase,
-    task: Task,
+    pub task: Task,
 
     // memory buffer
     read_buf: ReadBuf,
     write_buf: WriteBuf,
 
     // external resources
-    pub page: TaskPage,
+    pub page: NonNull<u8>,
     pub socket: Socket,
-    // req_bytes: [u8],
-    // res_bytes: [u8],
 }
 
 enum Phase {
@@ -48,28 +47,26 @@ enum Phase {
     Disconnect,
 }
 
-impl HttpTask {
+impl ClientTask {
     pub fn new(socket: Socket, page: TaskPage) -> Self {
-        let base = page.as_ptr();
-        let read_buf = unsafe { ReadBuf::from_raw(base) };
-        let write_buf = unsafe { WriteBuf::from_raw(base.add(Page::SIZE)) };
-        Self { task: Task::RD, phase: Phase::ReadRequest, read_buf, write_buf, page, socket }
-    }
-}
-
-impl WithTask for HttpTask {
-    fn state(&self) -> Task {
-        self.task
-    }
-
-    fn set_state(&mut self, state: Task) {
-        self.task = state;
+        let page_ptr = page.as_ptr();
+        let [rd, wr] = page.split();
+        let read_buf = ReadBuf::from_raw(rd);
+        let write_buf = WriteBuf::from_raw(wr);
+        Self {
+            task: Task::RD,
+            phase: Phase::ReadRequest,
+            read_buf,
+            write_buf,
+            page: page_ptr,
+            socket,
+        }
     }
 }
 
 // ===== poll entry point =====
 
-impl HttpTask {
+impl ClientTask {
     pub fn poll(&mut self, cx: &mut Context) -> Poll<()> {
         self.poll_inner(cx).map(|res| {
             if res.is_err() {
@@ -82,23 +79,27 @@ impl HttpTask {
         loop {
             match self.phase {
                 Phase::ReadRequest => {
-                    let Some(request) = self.read_buf.parse_request()? else {
-                        if ready!(self.read_buf.poll_read_fd(&self.socket, cx))? {
-                            self.phase = Phase::Disconnect;
+                    match self.read_buf.parse_request()? {
+                        Some(request) => {
+                            request_handler(request);
+                            write::response_writer(&mut self.write_buf)?;
+                            self.phase = Phase::WriteResponse;
                         }
-                        continue;
-                    };
-
-                    request_handler(request);
-
-                    // response
-
-                    write::response_writer(&mut self.write_buf)?;
-                    self.phase = Phase::WriteResponse;
+                        None => match self.read_buf.poll_read_fd(&self.socket)? {
+                            Poll::Ready(is_eof) => {
+                                if is_eof {
+                                    self.phase = Phase::Disconnect;
+                                }
+                            }
+                            Poll::Pending => {
+                                // register read interest
+                                self.task |= Task::RD;
+                            }
+                        },
+                    }
                 }
                 Phase::WriteResponse => {
                     ready!(self.write_buf.poll_flush(&self.socket, cx)?);
-                    self.write_buf.clear();
                     self.phase = Phase::ReadRequest;
                 }
                 Phase::Disconnect => return Poll::Ready(Ok(())),

@@ -1,12 +1,35 @@
-use core::mem::MaybeUninit;
-use core::{marker, slice};
+use core::mem::{self, MaybeUninit};
+use core::slice;
 
 use genos::event::epoll::{self, Epoll};
-use genos::fd::AsFd;
+use genos::fd::{AsFd, FromRawFd};
 use genos::{arch, sys};
+
+// ===== Event =====
+
+#[repr(transparent)]
+pub struct Event(epoll::Event);
+
+impl Event {
+    /// Returns `true` if event has read interest.
+    pub fn has_read(&self) -> bool {
+        self.0.events & Epoll::IN == Epoll::IN
+    }
+
+    /// Returns `true` if event has write interest.
+    pub fn has_write(&self) -> bool {
+        self.0.events & Epoll::OUT == Epoll::OUT
+    }
+
+    /// Returns event identifier.
+    pub fn data<D: EventData>(&self) -> D {
+        D::from_data(self.0.data)
+    }
+}
 
 // ===== EventData =====
 
+/// Application event identifier.
 pub trait EventData: Sized {
     fn from_data(data: u64) -> Self;
 
@@ -23,34 +46,17 @@ impl EventData for u64 {
     }
 }
 
-// ===== Events =====
+// ===== Polling =====
 
-pub struct Events<'a, T> {
-    events: slice::IterMut<'a, epoll::Event>,
-    _p: marker::PhantomData<fn() -> T>,
-}
+pub struct Polling(Epoll);
 
-impl<'a, T> Events<'a, T> {
-    pub fn new(events: &'a mut [epoll::Event]) -> Self {
-        Self { events: events.iter_mut(), _p: marker::PhantomData }
-    }
-}
-
-impl<'a, T: super::EventData> Iterator for Events<'a, T> {
-    type Item = (epoll::EventType, T);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.events.next().map(|e| (e.events, T::from_data(e.data)))
-    }
-}
-
-// ===== Epoll =====
-
-pub struct EventSource(Epoll);
-
-impl EventSource {
+impl Polling {
     pub fn new() -> Result<Self, sys::Error<arch::sys_epoll_create1>> {
         Epoll::create(Epoll::CLOEXEC).map(Self)
+    }
+
+    pub fn handle(&self) -> PollHandle {
+        PollHandle::new(self)
     }
 
     pub fn add<Fd: AsFd, D: EventData>(
@@ -65,11 +71,37 @@ impl EventSource {
         self.0.delete(fd)
     }
 
-    pub fn wait<'a, T: EventData>(
+    pub fn wait<'a>(
         &self,
         buf: &'a mut [MaybeUninit<epoll::Event>],
-    ) -> Result<Events<'a, T>, sys::Error<arch::sys_epoll_wait>> {
+    ) -> Result<&'a [Event], sys::Error<arch::sys_epoll_wait>> {
         let len = self.0.wait(buf, -1)?;
-        Ok(Events::new(unsafe { buf.assume_init_mut().get_unchecked_mut(..len) }))
+        // SAFETY: `Event` is transparent over epoll event, `len` returned from os
+        Ok(unsafe { slice::from_raw_parts(buf.as_ptr().cast(), len) })
+    }
+}
+
+// ===== PollHandle =====
+
+pub struct PollHandle(mem::ManuallyDrop<Polling>);
+
+impl PollHandle {
+    fn new(poll: &Polling) -> Self {
+        let fd = unsafe { <_>::from_raw_fd(poll.0.as_raw_fd()) };
+        Self(mem::ManuallyDrop::new(Polling(fd)))
+    }
+}
+
+impl Clone for PollHandle {
+    fn clone(&self) -> Self {
+        Self::new(&self.0)
+    }
+}
+
+impl core::ops::Deref for PollHandle {
+    type Target = Polling;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
