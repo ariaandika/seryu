@@ -1,15 +1,15 @@
 use core::ptr::NonNull;
 use core::slice;
-use core::task::{Context, Poll, ready};
+use core::task::{Context, Poll};
 
 use genos::fd::AsFd;
-use genos::io as sync_io;
+use genos::io;
 use seryu::bytes::Buf;
 use seryu::error::ReadError;
 use seryu::postgres::DecodeError;
 use seryu::postgres::backend::Message;
 
-use crate::io;
+use crate::task::ContextExt;
 
 // ===== ReadBuf =====
 
@@ -57,15 +57,17 @@ impl ReadBuf {
         fd: &Fd,
         cx: &mut Context<'_>,
     ) -> Poll<Result<bool, ReadError>> {
-        let buf = unsafe {
-            slice::from_raw_parts_mut(
-                self.ptr.as_ptr().add(self.len).cast(),
-                Self::CAPACITY - self.off - self.len,
-            )
-        };
-        let read = ready!(io::poll_read(fd, buf, cx))?;
-        self.len += read;
-        Poll::Ready(Ok(read == 0))
+        match self.read_fd_sync(fd) {
+            Ok(ok) => Poll::Ready(Ok(ok)),
+            Err(err) => {
+                if err.code().is_retry() {
+                    cx.register_task_read();
+                    Poll::Pending
+                } else {
+                    Poll::Ready(Err(err))
+                }
+            }
+        }
     }
 
     /// Returns `is_eof`.
@@ -76,7 +78,7 @@ impl ReadBuf {
                 Self::CAPACITY - self.off - self.len,
             )
         };
-        let read = sync_io::read(fd, buf)?;
+        let read = io::read(fd, buf)?;
         self.len += read;
         Ok(read == 0)
     }

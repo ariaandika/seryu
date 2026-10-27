@@ -1,16 +1,16 @@
 use core::mem::MaybeUninit;
 use core::ptr::NonNull;
 use core::slice;
-use core::task::{Context, Poll, ready};
+use core::task::Poll;
 
 use genos::fd::AsFd;
+use genos::io;
 use seryu::bytes::BufMut;
 use seryu::error::WriteError;
 use seryu::h1;
 
 use crate::error::Error;
 use crate::http::Page;
-use crate::io;
 
 // ===== ReadBuf =====
 
@@ -43,17 +43,22 @@ impl WriteBuf {
         self.off = 0;
     }
 
-    pub fn poll_flush<Fd: AsFd>(
-        &mut self,
-        fd: &Fd,
-        cx: &mut Context,
-    ) -> Poll<Result<(), WriteError>> {
+    pub fn poll_flush<Fd: AsFd>(&mut self, fd: &Fd) -> Poll<Result<(), WriteError>> {
         let base = unsafe { self.ptr.as_ptr().sub(CAP - self.rem) };
         while let len = CAP - self.rem - self.off
             && len != 0
         {
             let buf = unsafe { slice::from_raw_parts(base, len) };
-            self.off += ready!(io::poll_write(fd, buf, cx))?;
+            match io::write(fd, buf) {
+                Ok(read) => self.off += read,
+                Err(err) => {
+                    return if err.code().is_retry() {
+                        Poll::Pending
+                    } else {
+                        Poll::Ready(Err(err))
+                    };
+                }
+            }
         }
         self.clear();
         Poll::Ready(Ok(()))

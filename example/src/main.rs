@@ -6,7 +6,6 @@ use crate::queue::Queue;
 // OS Abstraction
 mod alloc;
 mod error;
-mod io;
 
 // Global Abstraction
 mod task;

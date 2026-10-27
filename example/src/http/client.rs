@@ -1,5 +1,5 @@
 use core::ptr::NonNull;
-use core::task::{Context, Poll, ready};
+use core::task::{Context, Poll};
 
 use genos::net::Socket;
 
@@ -75,7 +75,7 @@ impl ClientTask {
         })
     }
 
-    fn poll_inner(&mut self, cx: &mut Context) -> Poll<Result<(), Error>> {
+    fn poll_inner(&mut self, _cx: &mut Context) -> Poll<Result<(), Error>> {
         loop {
             match self.phase {
                 Phase::ReadRequest => {
@@ -99,7 +99,11 @@ impl ClientTask {
                     }
                 }
                 Phase::WriteResponse => {
-                    ready!(self.write_buf.poll_flush(&self.socket, cx)?);
+                    if self.write_buf.poll_flush(&self.socket)?.is_pending() {
+                        // TODO: sync "write interest" with "epoll write interest"
+                        self.task |= Task::WR;
+                        return Poll::Pending;
+                    }
                     self.phase = Phase::ReadRequest;
                 }
                 Phase::Disconnect => return Poll::Ready(Ok(())),

@@ -1,16 +1,16 @@
 use core::mem::MaybeUninit;
 use core::ptr::NonNull;
 use core::slice;
-use core::task::{Context, Poll, ready};
+use core::task::{Context, Poll};
 
 use genos::fd::AsFd;
-use genos::io as sync_io;
+use genos::io;
 use seryu::alloc::OutOfCapacity;
 use seryu::bytes::BufMut;
 use seryu::error::WriteError;
 use seryu::postgres::Encode;
 
-use crate::io;
+use crate::task::ContextExt;
 
 // ===== WriteBuf =====
 
@@ -61,21 +61,23 @@ impl WriteBuf {
         fd: &Fd,
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), WriteError>> {
-        while self.len != 0 {
-            let bytes = unsafe { slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) };
-            let write = ready!(io::poll_write(fd, bytes, cx))?;
-            self.ptr = unsafe { self.ptr.add(write) };
-            self.len -= write;
-            self.off += write;
+        match self.flush_sync(fd) {
+            Ok(ok) => Poll::Ready(Ok(ok)),
+            Err(err) => {
+                if err.code().is_retry() {
+                    cx.register_task_write();
+                    Poll::Pending
+                } else {
+                    Poll::Ready(Err(err))
+                }
+            }
         }
-        self.clear();
-        Poll::Ready(Ok(()))
     }
 
     pub fn flush_sync<Fd: AsFd>(&mut self, fd: &Fd) -> Result<(), WriteError> {
         while self.len != 0 {
             let bytes = unsafe { slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) };
-            let write = sync_io::write(fd, bytes)?;
+            let write = io::write(fd, bytes)?;
             self.ptr = unsafe { self.ptr.add(write) };
             self.len -= write;
             self.off += write;

@@ -109,8 +109,6 @@ impl ServerTask {
             // poll the task
             let res = task.poll(cx.as_mut_context());
 
-            // TODO: sync write interest with epoll interest
-
             if res.is_pending() {
                 continue;
             }
