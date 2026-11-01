@@ -1,6 +1,4 @@
 use core::mem::MaybeUninit;
-use core::ptr::NonNull;
-use core::slice;
 use core::task::{Context, Poll};
 
 use genos::fd::AsFd;
@@ -10,12 +8,13 @@ use seryu::bytes::BufMut;
 use seryu::error::WriteError;
 use seryu::postgres::Encode;
 
+use crate::alloc::{self, Mmap};
 use crate::task::ContextExt;
 
 // ===== WriteBuf =====
 
 pub struct WriteBuf {
-    ptr: NonNull<u8>,
+    buf: Mmap<[MaybeUninit<u8>; Self::CAPACITY]>,
     len: usize,
     off: usize,
 }
@@ -25,12 +24,11 @@ pub struct WriteBuf {
 impl WriteBuf {
     pub const CAPACITY: usize = 1024;
 
-    pub unsafe fn from_raw(ptr: NonNull<u8>) -> Self {
-        Self { ptr, len: 0, off: 0 }
+    pub fn new() -> alloc::Result<WriteBuf> {
+        Mmap::array().map(|buf| Self { buf, len: 0, off: 0 })
     }
 
     pub fn clear(&mut self) {
-        self.ptr = unsafe { self.ptr.sub(self.off) };
         self.len = 0;
         self.off = 0;
     }
@@ -40,11 +38,7 @@ impl WriteBuf {
 
 impl BufMut for &mut WriteBuf {
     fn spare_mut(&mut self) -> &mut [MaybeUninit<u8>] {
-        unsafe {
-            let ptr = self.ptr.as_ptr().add(self.len);
-            let spare = WriteBuf::CAPACITY - self.off - self.len;
-            slice::from_raw_parts_mut(ptr.cast(), spare)
-        }
+        unsafe { self.buf.get_unchecked_mut(self.len..) }
     }
 
     unsafe fn advance_mut(&mut self, count: usize) {
@@ -75,12 +69,11 @@ impl WriteBuf {
     }
 
     pub fn flush_sync<Fd: AsFd>(&mut self, fd: &Fd) -> Result<(), WriteError> {
-        while self.len != 0 {
-            let bytes = unsafe { slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) };
-            let write = io::write(fd, bytes)?;
-            self.ptr = unsafe { self.ptr.add(write) };
-            self.len -= write;
-            self.off += write;
+        let buf = unsafe { self.buf.get_unchecked_mut(..self.len).assume_init_ref() };
+        while let Some(bytes) = buf.get(self.off..)
+            && !bytes.is_empty()
+        {
+            self.off += io::write(fd, bytes)?;
         }
         self.clear();
         Ok(())

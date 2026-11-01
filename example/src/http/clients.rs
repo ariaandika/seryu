@@ -1,23 +1,25 @@
-use core::mem::{ManuallyDrop, MaybeUninit};
-use core::ptr::NonNull;
-use core::{mem, ops};
+use core::mem::{self, ManuallyDrop, MaybeUninit};
 
 use genos::net::Socket;
 use seryu::alloc::OutOfCapacity;
 
-use crate::alloc;
+use crate::alloc::{self, Mmap};
 use crate::http::ClientTask;
 use crate::task::TaskId;
 
+const TASKS_CAP: usize = 16;
+
 pub struct Clients {
-    tasks: Tasks,
+    tasks: Mmap<[Task; TASKS_CAP]>,
     len: usize,
     last: usize,
 }
 
 impl Clients {
     pub fn new() -> alloc::Result<Self> {
-        Ok(Self { tasks: Tasks::new()?, len: 0, last: 0 })
+        // SAFETY: `Task` is valid with zeroed byte-pattern
+        let tasks = unsafe { Mmap::zeroed()? };
+        Ok(Self { tasks, len: 0, last: 0 })
     }
 
     pub fn peek_id(&self) -> TaskId {
@@ -62,32 +64,6 @@ impl Clients {
         unsafe { chunk.task.assume_init_drop() };
         chunk.set_none(self.last);
         self.last = idx;
-    }
-}
-
-// ===== Chunks =====
-
-const TASKS_CAP: usize = 16;
-
-struct Tasks(NonNull<[Task; TASKS_CAP]>);
-
-impl Tasks {
-    fn new() -> alloc::Result<Self> {
-        alloc::array().map(Self)
-    }
-}
-
-impl ops::Deref for Tasks {
-    type Target = [Task; TASKS_CAP];
-
-    fn deref(&self) -> &Self::Target {
-        unsafe { self.0.as_ref() }
-    }
-}
-
-impl ops::DerefMut for Tasks {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { self.0.as_mut() }
     }
 }
 

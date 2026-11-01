@@ -8,12 +8,9 @@ use seryu::error::{ReadError, WriteError};
 use seryu::postgres::backend::{BackendType as B, Message};
 use seryu::postgres::{Decode, Encode, backend, frontend};
 
-use crate::alloc;
 use crate::error::Error;
 use crate::pg::read::ReadBuf;
 use crate::pg::write::WriteBuf;
-
-const CAP: usize = ReadBuf::CAPACITY + WriteBuf::CAPACITY;
 
 pub struct Postgres {
     socket: Socket,
@@ -46,9 +43,9 @@ impl Postgres {
         socket.connect(addr, addrlen)?;
 
         // allocate message buffer
-        let ptr = alloc::array::<u8, CAP>()?.cast();
-        let read_buf = unsafe { ReadBuf::from_raw(ptr) };
-        let write_buf = unsafe { WriteBuf::from_raw(ptr.add(ReadBuf::CAPACITY)) };
+        let read_buf = ReadBuf::new()?;
+        let write_buf = WriteBuf::new()?;
+
         Ok(Self { socket, read_buf, write_buf })
     }
 }

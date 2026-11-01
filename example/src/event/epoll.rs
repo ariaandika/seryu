@@ -1,9 +1,16 @@
 use core::mem::{self, MaybeUninit};
-use core::slice;
 
 use genos::event::epoll::{self, Epoll};
 use genos::fd::{AsFd, FromRawFd};
 use genos::{arch, sys};
+
+use crate::alloc::{self, Mmap};
+
+// ===== EventBuf =====
+
+pub const EVENT_CAP: usize = alloc::PAGE_SIZE / size_of::<Event>();
+
+pub type EventBuf = Mmap<[MaybeUninit<Event>; EVENT_CAP]>;
 
 // ===== Event =====
 
@@ -55,6 +62,10 @@ impl Polling {
         Epoll::create(Epoll::CLOEXEC).map(Self)
     }
 
+    pub fn event_buf() -> alloc::Result<EventBuf> {
+        Mmap::array()
+    }
+
     pub fn handle(&self) -> PollHandle {
         PollHandle::new(self)
     }
@@ -73,11 +84,13 @@ impl Polling {
 
     pub fn wait<'a>(
         &self,
-        buf: &'a mut [MaybeUninit<epoll::Event>],
+        buf: &'a mut [MaybeUninit<Event>],
     ) -> Result<&'a [Event], sys::Error<arch::sys_epoll_wait>> {
-        let len = self.0.wait(buf, -1)?;
-        // SAFETY: `Event` is transparent over epoll event, `len` returned from os
-        Ok(unsafe { slice::from_raw_parts(buf.as_ptr().cast(), len) })
+        // SAFETY: `Event` is transparent over epoll event
+        let ebuf = unsafe { &mut *(buf as *mut _ as *mut _) };
+        let len = self.0.wait(ebuf, -1)?;
+        // SAFETY: `len` represent initialized elements
+        Ok(unsafe { buf.assume_init_mut().get_unchecked_mut(..len) })
     }
 }
 

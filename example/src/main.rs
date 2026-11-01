@@ -1,6 +1,6 @@
 #![allow(clippy::module_inception)]
 use crate::error::Error;
-use crate::event::{EventBuf, EventKind, Polling};
+use crate::event::{EventKind, Polling};
 use crate::queue::Queue;
 
 // OS Abstraction
@@ -30,7 +30,7 @@ fn main() -> Result<(), Error> {
     // ===== data =====
 
     let mut queue = Queue::new()?;
-    let mut events = EventBuf::new()?;
+    let mut events = Polling::event_buf()?;
 
     loop {
         // ===== Wait for Events =====

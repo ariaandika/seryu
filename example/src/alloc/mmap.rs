@@ -1,5 +1,6 @@
+use core::mem::MaybeUninit;
 use core::ptr::NonNull;
-use core::{ffi, result};
+use core::{fmt, ops, result};
 
 use genos::mem::mmap;
 use genos::{arch, sys};
@@ -12,29 +13,65 @@ pub const PAGE_SIZE: usize = 4096;
 
 // ===== core =====
 
-pub fn mmap_anon(size: usize) -> Result<NonNull<ffi::c_void>> {
+pub fn mmap_anon<T>() -> Result<NonNull<T>> {
+    const { assert!(align_of::<T>() <= PAGE_SIZE) }
     mmap::mmap_anon(
         0 as _,
-        size,
+        size_of::<T>(),
         mmap::Prot::READ | mmap::Prot::WRITE,
         mmap::Flags::PRIVATE | mmap::Flags::ANON,
     )
+    .map(NonNull::cast)
 }
 
-pub fn munmap(ptr: *mut ffi::c_void, size: usize) {
-    let _ = mmap::munmap(ptr, size);
+pub fn munmap<T>(ptr: *mut T) {
+    let _ = mmap::munmap(ptr.cast(), size_of::<T>());
 }
 
-// ===== array =====
+// ===== Mmap =====
 
-/// Allocate Memory.
-///
-/// The returned address are page-aligned. Its contents are initialized to zero.
-pub fn array<T, const S: usize>() -> Result<NonNull<[T; S]>> {
-    const { assert!(align_of::<T>() <= PAGE_SIZE) }
-    mmap_anon(size_of::<[T; S]>()).map(NonNull::cast)
+#[repr(transparent)]
+pub struct Mmap<T>(NonNull<T>);
+
+impl<T> Drop for Mmap<T> {
+    fn drop(&mut self) {
+        munmap(self.0.as_ptr());
+    }
 }
 
-pub fn free_array<T, const S: usize>(ptr: NonNull<[T; S]>) {
-    munmap(ptr.as_ptr().cast(), size_of::<[T; S]>());
+impl<T> Mmap<T> {
+    /// Allocate new `Mmap` with its bytes set to zero.
+    ///
+    /// # Safety
+    ///
+    /// `T` must be valid in all-zero byte-pattern.
+    pub unsafe fn zeroed() -> Result<Self> {
+        mmap_anon().map(Self)
+    }
+}
+
+impl<T, const N: usize> Mmap<[MaybeUninit<T>; N]> {
+    pub fn array() -> Result<Self> {
+        mmap_anon().map(Self)
+    }
+}
+
+impl<T> ops::Deref for Mmap<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { self.0.as_ref() }
+    }
+}
+
+impl<T> ops::DerefMut for Mmap<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { self.0.as_mut() }
+    }
+}
+
+impl<T: fmt::Debug> fmt::Debug for Mmap<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        T::fmt(self, f)
+    }
 }

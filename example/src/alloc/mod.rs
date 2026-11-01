@@ -1,3 +1,3 @@
-pub use mmap::{PAGE_SIZE, Result, array, free_array};
+pub use mmap::{Mmap, PAGE_SIZE, Result};
 
 mod mmap;
