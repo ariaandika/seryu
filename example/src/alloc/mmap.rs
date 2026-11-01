@@ -27,8 +27,11 @@ pub fn munmap(ptr: *mut ffi::c_void, size: usize) {
 
 // ===== array =====
 
+/// Allocate Memory.
+///
+/// The returned address are page-aligned. Its contents are initialized to zero.
 pub fn array<T, const S: usize>() -> Result<NonNull<[T; S]>> {
-    const { assert!(align_of::<T>() <= 8) }
+    const { assert!(align_of::<T>() <= PAGE_SIZE) }
     mmap_anon(size_of::<[T; S]>()).map(NonNull::cast)
 }
 

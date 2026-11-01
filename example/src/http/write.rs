@@ -1,56 +1,48 @@
 use core::mem::MaybeUninit;
-use core::ptr::NonNull;
-use core::slice;
 use core::task::Poll;
 
 use genos::fd::AsFd;
-use genos::io;
+use genos::{io, sys};
 use seryu::bytes::BufMut;
 use seryu::error::WriteError;
 use seryu::h1;
 
+use crate::alloc;
 use crate::error::Error;
-use crate::http::Page;
+
+const SIZE: usize = alloc::PAGE_SIZE / 2;
+const META: usize = size_of::<usize>() * 2;
+const BYTES: usize = SIZE - META;
+
+const _: () = assert!(size_of::<WriteBuf>() == SIZE);
 
 // ===== ReadBuf =====
 
-pub const CAP: usize = Page::SIZE;
-
+#[repr(C)]
 pub struct WriteBuf {
-    ptr: NonNull<u8>,
-    rem: usize,
     off: usize,
+    len: usize,
+    buf: [MaybeUninit<u8>; BYTES],
 }
 
 impl WriteBuf {
-    pub fn from_raw(page: Page) -> Self {
-        Self { ptr: page.as_ptr(), rem: CAP, off: 0 }
-    }
-
-    fn spare(&mut self) -> &mut [MaybeUninit<u8>] {
-        unsafe { slice::from_raw_parts_mut(self.ptr.as_ptr().cast(), self.rem) }
-    }
-
-    unsafe fn assume_init_len(&mut self, len: usize) {
-        debug_assert_eq!(self.off, 0, "WriterBuf must not be written when flushing");
-        self.ptr = unsafe { self.ptr.add(len) };
-        self.rem -= len;
-    }
-
-    fn clear(&mut self) {
-        self.ptr = unsafe { self.ptr.sub(CAP - self.rem) };
-        self.rem = CAP;
+    pub fn clear(&mut self) {
         self.off = 0;
+        self.len = 0;
     }
 
     pub fn poll_flush<Fd: AsFd>(&mut self, fd: &Fd) -> Poll<Result<(), WriteError>> {
-        let base = unsafe { self.ptr.as_ptr().sub(CAP - self.rem) };
-        while let len = CAP - self.rem - self.off
-            && len != 0
+        let bytes = unsafe { self.buf.get_unchecked_mut(..self.len).assume_init_ref() };
+        while let Some(bytes) = bytes.get(self.off..)
+            && !bytes.is_empty()
         {
-            let buf = unsafe { slice::from_raw_parts(base, len) };
-            match io::write(fd, buf) {
-                Ok(read) => self.off += read,
+            match io::write(fd, bytes) {
+                Ok(write) => {
+                    if write == 0 {
+                        return Poll::Ready(Err(WriteError::from(sys::ErrCode::ECONNABORTED)));
+                    }
+                    self.off += write
+                }
                 Err(err) => {
                     return if err.code().is_retry() {
                         Poll::Pending
@@ -68,16 +60,14 @@ impl WriteBuf {
 impl BufMut for &mut WriteBuf {
     #[inline]
     fn spare_mut(&mut self) -> &mut [MaybeUninit<u8>] {
-        self.spare()
+        unsafe { self.buf.get_unchecked_mut(self.len..) }
     }
 
     #[inline]
     unsafe fn advance_mut(&mut self, count: usize) {
-        unsafe { self.assume_init_len(count) };
+        self.len += count;
     }
 }
-
-// ===== h1 =====
 
 pub fn response_writer(write_buf: &mut WriteBuf) -> Result<(), Error> {
     h1::StatusLine { version: b"HTTP/1.1", status: b"200", reason: b"OK" }

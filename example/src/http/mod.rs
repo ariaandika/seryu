@@ -1,18 +1,18 @@
-pub use pool::{MemoryPool, Page};
-pub use client::ClientTask;
+// pub use pool::{MemoryPool, Page};
 pub use server::ServerTask;
+pub use client::ClientTask;
+pub use clients::Clients;
 
-// ===== protocol =====
-
+// Protocol
 mod request;
 
-// ===== memory =====
-
-mod pool;
+// Bytes
 mod read;
 mod write;
 
-// ===== tasks =====
-
+// Task
 mod server;
 mod client;
+
+// Collections
+mod clients;

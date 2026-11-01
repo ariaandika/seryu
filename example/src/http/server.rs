@@ -2,25 +2,20 @@ use core::task::Poll;
 
 use genos::arch;
 use genos::sys::{self, ErrCode};
-use seryu::alloc::Slab;
 use seryu::os::Listener;
 
-use crate::alloc;
 use crate::error::Error;
 use crate::event::{Event, EventKind, PollHandle};
-use crate::http::{ClientTask, MemoryPool};
+use crate::http::Clients;
 use crate::queue::Queue;
 use crate::task::{ContextData, Task, TaskId, WakerData};
 
 // ===== ServerTask =====
 
-const CAP: usize = 512;
-
 pub struct ServerTask {
     listener: Listener,
     poll: PollHandle,
-    mpool: MemoryPool,
-    tasks: Slab<ClientTask>,
+    clients: Clients,
 }
 
 impl ServerTask {
@@ -28,15 +23,9 @@ impl ServerTask {
         let listener = Listener::bind_tcp(addr, port)?;
         poll.add(&listener, EventKind::Listener)?;
 
-        let mpool = MemoryPool::new()?;
-        let tasks = unsafe {
-            Slab::from_buf(
-                alloc::array::<ClientTask, CAP>()?.as_ptr().cast(),
-                size_of::<[ClientTask; CAP]>(),
-            )
-        };
+        let clients = Clients::new()?;
 
-        Ok(Self { listener, poll, mpool, tasks })
+        Ok(Self { listener, poll, clients })
     }
 }
 
@@ -53,18 +42,17 @@ impl ServerTask {
             Err(err) => return listener_error(err),
         };
 
-        let data = EventKind::Client(TaskId::from_idx(self.tasks.peek_key()));
-        self.poll.add(&socket, data)?;
+        let event = EventKind::Client(self.clients.peek_id());
+        self.poll.add(&socket, event)?;
+        self.clients.create(socket)?;
 
-        let mem = self.mpool.alloc_page()?;
-        self.tasks.insert(ClientTask::new(socket, mem))?;
         Poll::Ready(Ok(()))
     }
 }
 
 impl ServerTask {
     pub fn schedule_client(&mut self, id: TaskId, event: &Event, queue: &mut Queue<TaskId>) {
-        let Some(task) = self.tasks.get_mut(id.to_idx()) else {
+        let Some(task) = self.clients.get_mut(id) else {
             return;
         };
 
@@ -96,7 +84,7 @@ impl ServerTask {
 impl ServerTask {
     pub fn execute(&mut self, queue: &mut Queue<TaskId>) {
         for id in queue.drain() {
-            let Some(task) = self.tasks.get_mut(id.to_idx()) else {
+            let Some(task) = self.clients.get_mut(id) else {
                 // dangling task id in scheduler
                 continue;
             };
@@ -107,19 +95,16 @@ impl ServerTask {
             let mut cx = ContextData::new(&waker);
 
             // poll the task
-            let res = task.poll(cx.as_mut_context());
-
-            if res.is_pending() {
+            if task.poll(cx.as_mut_context()).is_pending() {
                 continue;
             }
 
             // ===== task deallocation =====
 
-            let Some(task) = self.tasks.remove(id.to_idx()) else {
-                continue;
-            };
-            let _ = self.poll.delete(&task.socket);
-            self.mpool.release(task.page);
+            if let Err(err) = self.poll.delete(&task.socket) {
+                eprintln!("{err}");
+            }
+            self.clients.delete(id.to_idx());
         }
     }
 }
