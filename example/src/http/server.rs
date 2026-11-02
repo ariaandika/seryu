@@ -1,14 +1,14 @@
 use core::task::Poll;
 
-use genos::arch;
-use genos::sys::{self, ErrCode};
+use genos::net::Socket;
+use genos::sys::ErrCode;
 use seryu::os::Listener;
 
 use crate::error::Error;
 use crate::event::{Event, EventKind, PollHandle};
-use crate::http::Clients;
+use crate::http::{ClientTask, Clients};
 use crate::queue::Queue;
-use crate::task::{ContextData, Task, TaskId, WakerData};
+use crate::task::{Task, TaskId};
 
 // ===== ServerTask =====
 
@@ -27,26 +27,50 @@ impl ServerTask {
 
         Ok(Self { listener, poll, clients })
     }
+
+    pub fn create_task(&mut self, socket: Socket) -> Result<(), Error> {
+        let event = EventKind::Client(self.clients.peek_id());
+        self.poll.add(&socket, event)?;
+        self.clients.create(socket)?;
+        Ok(())
+    }
+
+    pub fn delete_task(&mut self, id: TaskId) {
+        let Some(task) = self.clients.get_mut(id) else {
+            return;
+        };
+        let _ = self.poll.delete(&task.socket);
+        self.clients.delete(id.to_idx());
+    }
+
+    pub fn task_mut(&mut self, id: TaskId) -> Option<&mut ClientTask> {
+        self.clients.get_mut(id)
+    }
 }
 
 // ===== Scheduling =====
 
 impl ServerTask {
     pub fn schedule_listener(&mut self) {
-        while !matches!(self.listener_inner(), Poll::Pending) {}
+        let _ = self.schedule_listener_inner();
     }
 
-    fn listener_inner(&mut self) -> Poll<Result<(), Error>> {
-        let socket = match self.listener.accept() {
-            Ok(ok) => ok,
-            Err(err) => return listener_error(err),
-        };
-
-        let event = EventKind::Client(self.clients.peek_id());
-        self.poll.add(&socket, event)?;
-        self.clients.create(socket)?;
-
-        Poll::Ready(Ok(()))
+    fn schedule_listener_inner(&mut self) -> Poll<Result<(), Error>> {
+        loop {
+            match self.listener.accept() {
+                Ok(socket) => {
+                    let _ = self.create_task(socket);
+                }
+                Err(err) => {
+                    use ErrCode as E;
+                    break match err.code() {
+                        E::ENFILE | E::EMFILE => panic!("out of file descriptor"),
+                        E::EAGAIN | E::EWOULDBLOCK => Poll::Pending,
+                        _ => Poll::Ready(Err(err.into())),
+                    };
+                }
+            }
+        }
     }
 }
 
@@ -76,46 +100,5 @@ impl ServerTask {
         }
 
         task.task = state.unset(Task::RD | Task::WR) | Task::QUEUE;
-    }
-}
-
-// ===== Execution =====
-
-impl ServerTask {
-    pub fn execute(&mut self, queue: &mut Queue<TaskId>) {
-        for id in queue.drain() {
-            let Some(task) = self.clients.get_mut(id) else {
-                // dangling task id in scheduler
-                continue;
-            };
-            task.task = task.task.unset(Task::QUEUE);
-
-            let waker_data = WakerData::new(id);
-            let waker = unsafe { waker_data.create_waker() };
-            let mut cx = ContextData::new(&waker);
-
-            // poll the task
-            if task.poll(cx.as_mut_context()).is_pending() {
-                continue;
-            }
-
-            // ===== task deallocation =====
-
-            if let Err(err) = self.poll.delete(&task.socket) {
-                eprintln!("{err}");
-            }
-            self.clients.delete(id.to_idx());
-        }
-    }
-}
-
-// ===== helpers =====
-
-fn listener_error(err: sys::Error<arch::sys_accept4>) -> Poll<Result<(), Error>> {
-    // TODO: reschedule accept when out of file descriptor
-    match err.code() {
-        ErrCode::ENFILE | ErrCode::EMFILE => panic!("out of file descriptor"),
-        ErrCode::EAGAIN | ErrCode::EWOULDBLOCK => Poll::Pending,
-        _ => Poll::Ready(Err(err.into())),
     }
 }

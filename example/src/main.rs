@@ -1,6 +1,7 @@
 #![allow(clippy::module_inception)]
 use crate::error::Error;
 use crate::event::{EventKind, Polling};
+use crate::http::ServerTask;
 use crate::queue::Queue;
 
 // OS Abstraction
@@ -21,16 +22,17 @@ mod pg;
 fn main() -> Result<(), Error> {
     let _ = pg::connect();
 
-    // ===== os =====
-
+    // event polling
     let polling = Polling::new()?;
 
-    let mut server = http::ServerTask::new([127, 0, 0, 1], 4040, polling.handle())?;
-
-    // ===== data =====
-
-    let mut queue = Queue::new()?;
+    // event buffer
     let mut events = Polling::event_buf()?;
+
+    // scheduled task execution
+    let mut queue = Queue::new()?;
+
+    // server state manager
+    let mut server = ServerTask::new([127, 0, 0, 1], 4040, polling.handle())?;
 
     loop {
         // ===== Wait for Events =====
@@ -46,6 +48,25 @@ fn main() -> Result<(), Error> {
         }
 
         // ===== Task Execution =====
-        server.execute(&mut queue);
+        for id in queue.drain() {
+            use task::{ContextData, Task, WakerData};
+
+            let Some(task) = server.task_mut(id) else {
+                // dangling task id in scheduler
+                continue;
+            };
+            task.task = task.task.unset(Task::QUEUE);
+
+            let waker_data = WakerData::new(id);
+            let waker = unsafe { waker_data.create_waker() };
+            let mut cx = ContextData::new(&waker);
+
+            // poll the task
+            if task.poll(cx.as_mut_context()).is_pending() {
+                continue;
+            }
+
+            server.delete_task(id);
+        }
     }
 }
