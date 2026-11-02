@@ -2,11 +2,13 @@
 use crate::error::Error;
 use crate::event::{EventKind, Polling};
 use crate::http::ServerTask;
+use crate::os::Listener;
 use crate::queue::Queue;
 
 // OS Abstraction
 mod alloc;
 mod error;
+mod os;
 
 // Global Abstraction
 mod task;
@@ -22,17 +24,14 @@ mod pg;
 fn main() -> Result<(), Error> {
     let _ = pg::connect();
 
-    // event polling
+    let listener = Listener::bind_tcp([127, 0, 0, 1], 4040)?;
     let polling = Polling::new()?;
 
-    // event buffer
     let mut events = Polling::event_buf()?;
-
-    // scheduled task execution
     let mut queue = Queue::new()?;
+    let mut server = ServerTask::new(polling.handle())?;
 
-    // server state manager
-    let mut server = ServerTask::new([127, 0, 0, 1], 4040, polling.handle())?;
+    polling.add(&listener, EventKind::Listener)?;
 
     loop {
         // ===== Wait for Events =====
@@ -42,7 +41,11 @@ fn main() -> Result<(), Error> {
         for event in events {
             use EventKind as Kind;
             match event.data() {
-                Kind::Listener => server.schedule_listener(),
+                Kind::Listener => {
+                    for socket in listener.accept() {
+                        server.create_task(socket)
+                    }
+                }
                 Kind::Client(id) => server.schedule_client(id, event, &mut queue),
             }
         }

@@ -1,8 +1,4 @@
-use core::task::Poll;
-
 use genos::net::Socket;
-use genos::sys::ErrCode;
-use seryu::os::Listener;
 
 use crate::error::Error;
 use crate::event::{Event, EventKind, PollHandle};
@@ -13,22 +9,20 @@ use crate::task::{Task, TaskId};
 // ===== ServerTask =====
 
 pub struct ServerTask {
-    listener: Listener,
     poll: PollHandle,
     clients: Clients,
 }
 
 impl ServerTask {
-    pub fn new(addr: [u8; 4], port: u16, poll: PollHandle) -> Result<ServerTask, Error> {
-        let listener = Listener::bind_tcp(addr, port)?;
-        poll.add(&listener, EventKind::Listener)?;
-
-        let clients = Clients::new()?;
-
-        Ok(Self { listener, poll, clients })
+    pub fn new(poll: PollHandle) -> Result<ServerTask, Error> {
+        Ok(Self { poll, clients: Clients::new()? })
     }
 
-    pub fn create_task(&mut self, socket: Socket) -> Result<(), Error> {
+    pub fn create_task(&mut self, socket: Socket) {
+        let _ = self.create_task_inner(socket);
+    }
+
+    fn create_task_inner(&mut self, socket: Socket) -> Result<(), Error> {
         let event = EventKind::Client(self.clients.peek_id());
         self.poll.add(&socket, event)?;
         self.clients.create(socket)?;
@@ -49,30 +43,6 @@ impl ServerTask {
 }
 
 // ===== Scheduling =====
-
-impl ServerTask {
-    pub fn schedule_listener(&mut self) {
-        let _ = self.schedule_listener_inner();
-    }
-
-    fn schedule_listener_inner(&mut self) -> Poll<Result<(), Error>> {
-        loop {
-            match self.listener.accept() {
-                Ok(socket) => {
-                    let _ = self.create_task(socket);
-                }
-                Err(err) => {
-                    use ErrCode as E;
-                    break match err.code() {
-                        E::ENFILE | E::EMFILE => panic!("out of file descriptor"),
-                        E::EAGAIN | E::EWOULDBLOCK => Poll::Pending,
-                        _ => Poll::Ready(Err(err.into())),
-                    };
-                }
-            }
-        }
-    }
-}
 
 impl ServerTask {
     pub fn schedule_client(&mut self, id: TaskId, event: &Event, queue: &mut Queue<TaskId>) {
