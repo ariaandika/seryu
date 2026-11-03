@@ -1,6 +1,6 @@
 use core::task::{Context, Waker};
 
-use crate::task::{Task, WakerData};
+use crate::task::{Interest, WakerData};
 
 // ===== ContextExt =====
 
@@ -8,11 +8,11 @@ pub trait ContextExt {
     fn data_mut(&mut self) -> &mut ContextData<'_>;
 
     fn register_task_read(&mut self) {
-        self.data_mut().state |= Task::RD;
+        self.data_mut().state |= Interest::READ;
     }
 
     fn register_task_write(&mut self) {
-        self.data_mut().state |= Task::WR;
+        self.data_mut().state |= Interest::WRITE;
     }
 }
 
@@ -28,12 +28,12 @@ impl ContextExt for Context<'_> {
 #[repr(C)]
 pub struct ContextData<'a> {
     waker: &'a Waker,
-    state: Task,
+    state: Interest,
 }
 
 impl<'a> ContextData<'a> {
     pub fn new(waker: &'a Waker) -> Self {
-        Self { waker, state: Task::EMPTY }
+        Self { waker, state: Interest::EMPTY }
     }
 
     pub fn as_mut_context(&mut self) -> &mut Context<'a> {

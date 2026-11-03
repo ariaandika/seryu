@@ -4,7 +4,7 @@ use crate::error::Error;
 use crate::event::{Event, EventKind, PollHandle};
 use crate::http::{ClientTask, Clients};
 use crate::queue::Queue;
-use crate::task::{Task, TaskId};
+use crate::task::{Interest, TaskId};
 
 // ===== ServerTask =====
 
@@ -50,12 +50,12 @@ impl ServerTask {
             return;
         };
 
-        let state = task.task;
-        let want_rd = state.has(Task::RD) & event.has_read();
-        let want_wr = state.has(Task::WR) & event.has_write();
+        let state = task.interest;
+        let want_rd = state.has(Interest::READ) & event.has_read();
+        let want_wr = state.has(Interest::WRITE) & event.has_write();
 
         // prevent double queues
-        if state.has(Task::QUEUE) {
+        if state.has(Interest::QUEUE) {
             return;
         }
 
@@ -69,6 +69,6 @@ impl ServerTask {
             panic!("queue full")
         }
 
-        task.task = state.unset(Task::RD | Task::WR) | Task::QUEUE;
+        task.interest = state.unset(Interest::READ | Interest::WRITE) | Interest::QUEUE;
     }
 }

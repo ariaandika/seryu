@@ -15,28 +15,28 @@ impl TaskId {
     }
 }
 
-// ===== TaskState =====
+// ===== Interest =====
 
 /// Task state.
 #[derive(Clone, Copy)]
-pub struct Task(u32);
+pub struct Interest(u32);
 
-impl Task {
+impl Interest {
     pub const EMPTY: Self = Self(0);
-    pub const RD: Self = Self(1 << 0);
+    pub const READ: Self = Self(1 << 0);
     pub const QUEUE: Self = Self(1 << 1);
-    pub const WR: Self = Self(1 << 2);
+    pub const WRITE: Self = Self(1 << 2);
 
-    pub fn has(&self, state: Task) -> bool {
+    pub fn has(&self, state: Interest) -> bool {
         self.0 & state.0 == state.0
     }
 
-    pub fn unset(&self, state: Task) -> Self {
+    pub fn unset(&self, state: Interest) -> Self {
         Self(self.0 & (!state.0))
     }
 }
 
-impl ops::BitOr for Task {
+impl ops::BitOr for Interest {
     type Output = Self;
 
     fn bitor(self, rhs: Self) -> Self::Output {
@@ -44,13 +44,13 @@ impl ops::BitOr for Task {
     }
 }
 
-impl ops::BitOrAssign for Task {
+impl ops::BitOrAssign for Interest {
     fn bitor_assign(&mut self, rhs: Self) {
         self.0.bitor_assign(rhs.0);
     }
 }
 
-impl ops::BitAnd for Task {
+impl ops::BitAnd for Interest {
     type Output = Self;
 
     fn bitand(self, rhs: Self) -> Self::Output {

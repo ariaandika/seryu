@@ -52,13 +52,13 @@ fn main() -> Result<(), Error> {
 
         // ===== Task Execution =====
         for id in queue.drain() {
-            use task::{ContextData, Task, WakerData};
+            use task::{ContextData, Interest, WakerData};
 
             let Some(task) = server.task_mut(id) else {
                 // dangling task id in scheduler
                 continue;
             };
-            task.task = task.task.unset(Task::QUEUE);
+            task.interest = task.interest.unset(Interest::QUEUE);
 
             let waker_data = WakerData::new(id);
             let waker = unsafe { waker_data.create_waker() };
