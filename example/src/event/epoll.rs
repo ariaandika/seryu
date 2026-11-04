@@ -1,7 +1,7 @@
-use core::mem::{self, MaybeUninit};
+use core::mem::MaybeUninit;
 
 use genos::event::epoll::{self, Epoll};
-use genos::fd::{AsFd, FromRawFd};
+use genos::fd::AsFd;
 use genos::{arch, sys};
 
 use crate::alloc::{self, Mmap};
@@ -66,10 +66,6 @@ impl Polling {
         Mmap::array()
     }
 
-    pub fn handle(&self) -> PollHandle {
-        PollHandle::new(self)
-    }
-
     pub fn add<Fd: AsFd, D: EventData>(
         &self,
         fd: &Fd,
@@ -91,30 +87,5 @@ impl Polling {
         let len = self.0.wait(ebuf, -1)?;
         // SAFETY: `len` represent initialized elements
         Ok(unsafe { buf.assume_init_mut().get_unchecked_mut(..len) })
-    }
-}
-
-// ===== PollHandle =====
-
-pub struct PollHandle(mem::ManuallyDrop<Polling>);
-
-impl PollHandle {
-    fn new(poll: &Polling) -> Self {
-        let fd = unsafe { <_>::from_raw_fd(poll.0.as_raw_fd()) };
-        Self(mem::ManuallyDrop::new(Polling(fd)))
-    }
-}
-
-impl Clone for PollHandle {
-    fn clone(&self) -> Self {
-        Self::new(&self.0)
-    }
-}
-
-impl core::ops::Deref for PollHandle {
-    type Target = Polling;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
     }
 }

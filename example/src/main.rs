@@ -1,6 +1,7 @@
 #![allow(clippy::module_inception)]
 use crate::error::Error;
 use crate::event::{EventKind, Polling};
+use crate::global::{Global, setup_global};
 use crate::http::ServerTask;
 use crate::os::Listener;
 use crate::queue::Queue;
@@ -10,7 +11,8 @@ mod alloc;
 mod error;
 mod os;
 
-// Global Abstraction
+// Shared Abstraction
+mod global;
 mod task;
 
 // Global State
@@ -29,9 +31,11 @@ fn main() -> Result<(), Error> {
 
     let mut events = Polling::event_buf()?;
     let mut queue = Queue::new()?;
-    let mut server = ServerTask::new(polling.handle())?;
+    let mut server = ServerTask::new()?;
 
     polling.add(&listener, EventKind::Listener)?;
+
+    setup_global(&Global { poll: &polling });
 
     loop {
         // ===== Wait for Events =====

@@ -1,4 +1,4 @@
-pub use epoll::{Event, EventData, PollHandle, Polling};
+pub use epoll::{Event, EventData, Polling};
 pub use app::EventKind;
 
 mod epoll;

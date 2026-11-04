@@ -1,7 +1,8 @@
 use genos::net::Socket;
 
 use crate::error::Error;
-use crate::event::{Event, EventKind, PollHandle};
+use crate::event::{Event, EventKind};
+use crate::global;
 use crate::http::{ClientTask, Clients};
 use crate::queue::Queue;
 use crate::task::{Interest, TaskId};
@@ -9,13 +10,12 @@ use crate::task::{Interest, TaskId};
 // ===== ServerTask =====
 
 pub struct ServerTask {
-    poll: PollHandle,
     clients: Clients,
 }
 
 impl ServerTask {
-    pub fn new(poll: PollHandle) -> Result<ServerTask, Error> {
-        Ok(Self { poll, clients: Clients::new()? })
+    pub fn new() -> Result<ServerTask, Error> {
+        Ok(Self { clients: Clients::new()? })
     }
 
     pub fn create_task(&mut self, socket: Socket) {
@@ -24,7 +24,7 @@ impl ServerTask {
 
     fn create_task_inner(&mut self, socket: Socket) -> Result<(), Error> {
         let event = EventKind::Client(self.clients.peek_id());
-        self.poll.add(&socket, event)?;
+        global::poll().add(&socket, event)?;
         self.clients.create(socket)?;
         Ok(())
     }
@@ -33,7 +33,7 @@ impl ServerTask {
         let Some(task) = self.clients.get_mut(id) else {
             return;
         };
-        let _ = self.poll.delete(&task.socket);
+        let _ = global::poll().delete(&task.socket);
         self.clients.delete(id.to_idx());
     }
 
