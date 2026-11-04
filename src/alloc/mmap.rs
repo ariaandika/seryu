@@ -13,7 +13,7 @@ pub const PAGE_SIZE: usize = 4096;
 
 // ===== core =====
 
-pub fn mmap_anon<T>() -> Result<NonNull<T>> {
+fn mmap_anon<T>() -> Result<NonNull<T>> {
     const { assert!(align_of::<T>() <= PAGE_SIZE) }
     mmap::mmap_anon(
         0 as _,
@@ -24,7 +24,7 @@ pub fn mmap_anon<T>() -> Result<NonNull<T>> {
     .map(NonNull::cast)
 }
 
-pub fn munmap<T>(ptr: *mut T) {
+fn munmap<T>(ptr: *mut T) {
     let _ = mmap::munmap(ptr.cast(), size_of::<T>());
 }
 
@@ -34,6 +34,7 @@ pub fn munmap<T>(ptr: *mut T) {
 pub struct Mmap<T>(NonNull<T>);
 
 impl<T> Drop for Mmap<T> {
+    #[inline]
     fn drop(&mut self) {
         munmap(self.0.as_ptr());
     }
@@ -45,12 +46,14 @@ impl<T> Mmap<T> {
     /// # Safety
     ///
     /// `T` must be valid in all-zero byte-pattern.
+    #[inline]
     pub unsafe fn zeroed() -> Result<Self> {
         mmap_anon().map(Self)
     }
 }
 
 impl<T, const N: usize> Mmap<[MaybeUninit<T>; N]> {
+    #[inline]
     pub fn array() -> Result<Self> {
         mmap_anon().map(Self)
     }
@@ -59,12 +62,14 @@ impl<T, const N: usize> Mmap<[MaybeUninit<T>; N]> {
 impl<T> ops::Deref for Mmap<T> {
     type Target = T;
 
+    #[inline]
     fn deref(&self) -> &Self::Target {
         unsafe { self.0.as_ref() }
     }
 }
 
 impl<T> ops::DerefMut for Mmap<T> {
+    #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe { self.0.as_mut() }
     }

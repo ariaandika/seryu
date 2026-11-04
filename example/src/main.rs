@@ -1,4 +1,6 @@
 #![allow(clippy::module_inception)]
+use seryu::alloc::{Arena, Brk};
+
 use crate::error::Error;
 use crate::event::{EventKind, Polling};
 use crate::global::{Global, setup_global};
@@ -29,8 +31,9 @@ fn main() -> Result<(), Error> {
     let listener = Listener::bind_tcp([127, 0, 0, 1], 4040)?;
     let polling = Polling::new()?;
 
-    let mut events = Polling::event_buf()?;
-    let mut queue = Queue::new()?;
+    let arena = Arena::<_, { alloc::PAGE_SIZE }>::new(Brk)?;
+    let mut events = Polling::event_buf(&arena)?;
+    let mut queue = Queue::new(&arena)?;
     let mut server = ServerTask::new()?;
 
     polling.add(&listener, EventKind::Listener)?;
@@ -50,7 +53,11 @@ fn main() -> Result<(), Error> {
                         server.create_task(socket)
                     }
                 }
-                Kind::Client(id) => server.schedule_client(id, event, &mut queue),
+                Kind::Client(id) => {
+                    if server.schedule_client(id, event) {
+                        queue.push(id).expect("queue full");
+                    }
+                }
             }
         }
 

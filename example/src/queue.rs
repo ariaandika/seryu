@@ -1,24 +1,24 @@
 use core::mem::MaybeUninit;
-use core::{mem, slice};
+use core::slice;
 
+use seryu::alloc::Allocator;
 use seryu::alloc::slab::InsertError;
 
-use crate::alloc::{self, Mmap};
+use crate::alloc::{self, Owned};
 
 // ===== Queue =====
 
-const SIZE: usize = alloc::PAGE_SIZE;
+const SIZE: usize = alloc::PAGE_SIZE / 4;
 const CAP: usize = SIZE / 8;
 
-pub struct Queue<T> {
-    buf: Mmap<[MaybeUninit<T>; CAP]>,
+pub struct Queue<T, A: Allocator> {
+    buf: Owned<[MaybeUninit<T>; CAP], A>,
     len: usize,
 }
 
-impl<T> Queue<T> {
-    pub fn new() -> alloc::Result<Self> {
-        const { assert!(!mem::needs_drop::<T>()) }
-        Mmap::array().map(|buf| Self { buf, len: 0 })
+impl<T, A: Allocator> Queue<T, A> {
+    pub fn new(alloc: A) -> Result<Self, A::Error> {
+        Ok(Self { buf: Owned::uninit_array(alloc)?, len: 0 })
     }
 
     pub fn push(&mut self, task: T) -> Result<(), InsertError<T>> {

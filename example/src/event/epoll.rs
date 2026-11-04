@@ -3,14 +3,9 @@ use core::mem::MaybeUninit;
 use genos::event::epoll::{self, Epoll};
 use genos::fd::AsFd;
 use genos::{arch, sys};
+use seryu::alloc::Allocator;
 
-use crate::alloc::{self, Mmap};
-
-// ===== EventBuf =====
-
-pub const EVENT_CAP: usize = alloc::PAGE_SIZE / size_of::<Event>();
-
-pub type EventBuf = Mmap<[MaybeUninit<Event>; EVENT_CAP]>;
+use crate::alloc::{self, Owned};
 
 // ===== Event =====
 
@@ -62,10 +57,6 @@ impl Polling {
         Epoll::create(Epoll::CLOEXEC).map(Self)
     }
 
-    pub fn event_buf() -> alloc::Result<EventBuf> {
-        Mmap::array()
-    }
-
     pub fn add<Fd: AsFd, D: EventData>(
         &self,
         fd: &Fd,
@@ -87,5 +78,17 @@ impl Polling {
         let len = self.0.wait(ebuf, -1)?;
         // SAFETY: `len` represent initialized elements
         Ok(unsafe { buf.assume_init_mut().get_unchecked_mut(..len) })
+    }
+}
+
+// ===== EventBuf =====
+
+pub const EVENT_CAP: usize = alloc::PAGE_SIZE / 2 / size_of::<Event>();
+
+pub type EventBuf<A> = Owned<[MaybeUninit<Event>; EVENT_CAP], A>;
+
+impl Polling {
+    pub fn event_buf<A: Allocator>(alloc: A) -> Result<EventBuf<A>, A::Error> {
+        Owned::uninit_array(alloc)
     }
 }

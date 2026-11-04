@@ -4,7 +4,6 @@ use crate::error::Error;
 use crate::event::{Event, EventKind};
 use crate::global;
 use crate::http::{ClientTask, Clients};
-use crate::queue::Queue;
 use crate::task::{Interest, TaskId};
 
 // ===== ServerTask =====
@@ -45,9 +44,10 @@ impl ServerTask {
 // ===== Scheduling =====
 
 impl ServerTask {
-    pub fn schedule_client(&mut self, id: TaskId, event: &Event, queue: &mut Queue<TaskId>) {
+    /// Returns `true` if given task should be scheduled.
+    pub fn schedule_client(&mut self, id: TaskId, event: &Event) -> bool {
         let Some(task) = self.clients.get_mut(id) else {
-            return;
+            return false;
         };
 
         let state = task.interest;
@@ -56,19 +56,15 @@ impl ServerTask {
 
         // prevent double queues
         if state.has(Interest::QUEUE) {
-            return;
+            return false;
         }
 
         // prevent not interested event
         if !(want_rd | want_wr) {
-            return;
-        }
-
-        if queue.push(id).is_err() {
-            // TODO: handle full task queue
-            panic!("queue full")
+            return false;
         }
 
         task.interest = state.unset(Interest::READ | Interest::WRITE) | Interest::QUEUE;
+        true
     }
 }
