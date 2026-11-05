@@ -28,10 +28,6 @@ pub struct ReadBuf {
 }
 
 impl ReadBuf {
-    pub unsafe fn request_init(&self) -> Request {
-        Request::new(unsafe { self.req.assume_init_ref() })
-    }
-
     pub fn clear(&mut self) {
         self.off = 0;
         self.len = 0;

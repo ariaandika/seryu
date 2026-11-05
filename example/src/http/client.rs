@@ -1,25 +1,14 @@
 use core::mem::MaybeUninit;
-use core::task::{Context, Poll};
+use core::pin::Pin;
+use core::task::{Context, Poll, ready};
 
 use genos::net::Socket;
+use seryu::alloc::MmapAlloc;
 
 use crate::alloc;
 use crate::error::Error;
-use crate::http::request::Request;
+use crate::http::any::AnyFuture;
 use crate::task::Interest;
-
-// ===== Handler =====
-
-pub fn request_handler(request: Request) {
-    println!(
-        "{} {}",
-        String::from_utf8_lossy(request.method()),
-        String::from_utf8_lossy(request.target())
-    );
-    for header in request.headers() {
-        println!("{header:?}");
-    }
-}
 
 // ===== Task =====
 
@@ -27,16 +16,16 @@ const _: () = assert!(size_of::<ClientTask>() == alloc::PAGE_SIZE * 2);
 
 #[repr(C, align(4096))]
 pub struct ClientTask {
-    phase: Phase,
     pub interest: Interest,
     pub socket: Socket,
+    phase: Phase,
     read_buf: super::read::ReadBuf,
     write_buf: super::write::WriteBuf,
 }
 
 enum Phase {
     ReadRequest,
-    Handler,
+    Handler(AnyFuture<MmapAlloc>),
     WriteResponse,
     Disconnect,
 }
@@ -57,41 +46,46 @@ impl ClientTask {
 
 // ===== poll entry point =====
 
-impl ClientTask {
-    pub fn poll(&mut self, _cx: &mut Context) -> Poll<Result<(), Error>> {
+impl Future for ClientTask {
+    type Output = Result<(), Error>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let me = unsafe { self.get_unchecked_mut() };
+        me.interest = me.interest.unset(Interest::QUEUE);
+
         loop {
-            match self.phase {
+            match &mut me.phase {
                 Phase::ReadRequest => {
-                    match self.read_buf.parse_request()? {
-                        Some(_) => {
-                            self.phase = Phase::Handler;
+                    match me.read_buf.parse_request()? {
+                        Some(req) => {
+                            let fut = crate::request_handler(req);
+                            me.phase = Phase::Handler(AnyFuture::new(fut, MmapAlloc)?);
                         }
-                        None => match self.read_buf.poll_read(&self.socket)? {
+                        None => match me.read_buf.poll_read(&me.socket)? {
                             Poll::Ready(is_eof) => {
                                 if is_eof {
-                                    self.phase = Phase::Disconnect;
+                                    me.phase = Phase::Disconnect;
                                 }
                             }
                             Poll::Pending => {
                                 // register read interest
-                                self.interest |= Interest::READ;
+                                me.interest |= Interest::READ;
                             }
                         },
                     }
                 }
-                Phase::Handler => {
-                    let request = unsafe { self.read_buf.request_init() };
-                    request_handler(request);
-                    super::write::response_writer(&mut self.write_buf)?;
-                    self.phase = Phase::WriteResponse;
+                Phase::Handler(fut) => {
+                    ready!(Pin::new(fut).poll(cx));
+                    super::write::response_writer(&mut me.write_buf)?;
+                    me.phase = Phase::WriteResponse;
                 }
                 Phase::WriteResponse => {
-                    if self.write_buf.poll_flush(&self.socket)?.is_pending() {
+                    if me.write_buf.poll_flush(&me.socket)?.is_pending() {
                         // TODO: sync "write interest" with "epoll write interest"
-                        self.interest |= Interest::WRITE;
+                        me.interest |= Interest::WRITE;
                         return Poll::Pending;
                     }
-                    self.phase = Phase::ReadRequest;
+                    me.phase = Phase::ReadRequest;
                 }
                 Phase::Disconnect => return Poll::Ready(Ok(())),
             }

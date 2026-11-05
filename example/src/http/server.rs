@@ -1,3 +1,5 @@
+use core::pin::Pin;
+
 use genos::net::Socket;
 
 use crate::error::Error;
@@ -36,8 +38,8 @@ impl ServerTask {
         self.clients.delete(id.to_idx());
     }
 
-    pub fn task_mut(&mut self, id: TaskId) -> Option<&mut ClientTask> {
-        self.clients.get_mut(id)
+    pub fn task_mut(&mut self, id: TaskId) -> Option<Pin<&mut ClientTask>> {
+        self.clients.get_mut(id).map(Pin::new)
     }
 }
 

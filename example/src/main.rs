@@ -6,10 +6,9 @@ use seryu::alloc::{Arena, Brk};
 use crate::error::Error;
 use crate::event::{EventKind, Polling};
 use crate::global::{Global, setup_global};
-use crate::http::ServerTask;
+use crate::http::{Request, ServerTask};
 use crate::os::Listener;
 use crate::queue::Queue;
-use crate::task::Interest;
 
 // OS Abstraction
 mod alloc;
@@ -70,9 +69,8 @@ fn main() -> Result<(), Error> {
                 // dangling task id in scheduler
                 continue;
             };
-            task.interest = task.interest.unset(Interest::QUEUE);
 
-            let waker = task::waker(task);
+            let waker = task::waker(&*task);
             let mut cx = Context::from_waker(&waker);
 
             // poll the task
@@ -82,5 +80,16 @@ fn main() -> Result<(), Error> {
 
             server.delete_task(id);
         }
+    }
+}
+
+async fn request_handler(request: Request) {
+    println!(
+        "{} {}",
+        String::from_utf8_lossy(request.method()),
+        String::from_utf8_lossy(request.target())
+    );
+    for header in request.headers() {
+        println!("{header:?}");
     }
 }
