@@ -9,7 +9,6 @@ use seryu::error::WriteError;
 use seryu::postgres::Encode;
 
 use crate::alloc::{self, Mmap};
-use crate::task::ContextExt;
 
 // ===== WriteBuf =====
 
@@ -53,13 +52,13 @@ impl WriteBuf {
     pub fn poll_flush<Fd: AsFd>(
         &mut self,
         fd: &Fd,
-        cx: &mut Context<'_>,
+        _cx: &mut Context<'_>,
     ) -> Poll<Result<(), WriteError>> {
         match self.flush_sync(fd) {
             Ok(ok) => Poll::Ready(Ok(ok)),
             Err(err) => {
                 if err.code().is_retry() {
-                    cx.register_task_write();
+                    // cx.register_task_write();
                     Poll::Pending
                 } else {
                     Poll::Ready(Err(err))

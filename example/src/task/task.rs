@@ -18,11 +18,10 @@ impl TaskId {
 // ===== Interest =====
 
 /// Task state.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct Interest(u32);
 
 impl Interest {
-    pub const EMPTY: Self = Self(0);
     pub const READ: Self = Self(1 << 0);
     pub const QUEUE: Self = Self(1 << 1);
     pub const WRITE: Self = Self(1 << 2);

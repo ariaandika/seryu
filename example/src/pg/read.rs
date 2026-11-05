@@ -10,7 +10,6 @@ use seryu::postgres::DecodeError;
 use seryu::postgres::backend::Message;
 
 use crate::alloc::{self, Mmap};
-use crate::task::ContextExt;
 
 // ===== ReadBuf =====
 
@@ -51,13 +50,13 @@ impl ReadBuf {
     pub fn poll_read_fd<Fd: AsFd>(
         &mut self,
         fd: &Fd,
-        cx: &mut Context<'_>,
+        _cx: &mut Context<'_>,
     ) -> Poll<Result<bool, ReadError>> {
         match self.read_fd_sync(fd) {
             Ok(ok) => Poll::Ready(Ok(ok)),
             Err(err) => {
                 if err.code().is_retry() {
-                    cx.register_task_read();
+                    // cx.register_task_read();
                     Poll::Pending
                 } else {
                     Poll::Ready(Err(err))

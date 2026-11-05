@@ -1,33 +1,7 @@
-use core::ptr;
 use core::task::{RawWaker, RawWakerVTable, Waker};
 
-use crate::task::TaskId;
-
-pub struct WakerData {
-    id: TaskId,
-}
-
-impl Clone for WakerData {
-    fn clone(&self) -> Self {
-        Self { id: self.id }
-    }
-}
-
-impl WakerData {
-    pub fn new(id: TaskId) -> Self {
-        Self { id }
-    }
-
-    pub fn is(waker: &Waker) -> bool {
-        ptr::addr_eq(waker.vtable() as *const _, &raw const VTABLE)
-    }
-
-    /// # Safety
-    ///
-    /// `self` must not be moved for the lifetime of the returned waker.
-    pub unsafe fn create_waker(&self) -> Waker {
-        unsafe { Waker::new(self as *const _ as *const _, &VTABLE) }
-    }
+pub fn waker<T>(task: *const T) -> Waker {
+    unsafe { Waker::new(task.cast(), &VTABLE) }
 }
 
 static VTABLE: RawWakerVTable = {

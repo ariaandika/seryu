@@ -1,4 +1,6 @@
 #![allow(clippy::module_inception)]
+use core::task::Context;
+
 use seryu::alloc::{Arena, Brk};
 
 use crate::error::Error;
@@ -7,6 +9,7 @@ use crate::global::{Global, setup_global};
 use crate::http::ServerTask;
 use crate::os::Listener;
 use crate::queue::Queue;
+use crate::task::Interest;
 
 // OS Abstraction
 mod alloc;
@@ -63,20 +66,17 @@ fn main() -> Result<(), Error> {
 
         // ===== Task Execution =====
         for id in queue.drain() {
-            use task::{ContextData, Interest, WakerData};
-
             let Some(task) = server.task_mut(id) else {
                 // dangling task id in scheduler
                 continue;
             };
             task.interest = task.interest.unset(Interest::QUEUE);
 
-            let waker_data = WakerData::new(id);
-            let waker = unsafe { waker_data.create_waker() };
-            let mut cx = ContextData::new(&waker);
+            let waker = task::waker(task);
+            let mut cx = Context::from_waker(&waker);
 
             // poll the task
-            if task.poll(cx.as_mut_context()).is_pending() {
+            if task.poll(&mut cx).is_pending() {
                 continue;
             }
 

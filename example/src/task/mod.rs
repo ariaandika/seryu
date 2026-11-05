@@ -1,8 +1,6 @@
 //! Task manager.
-pub use waker::WakerData;
-pub use context::{ContextData, ContextExt};
+pub use waker::waker;
 pub use task::{TaskId, Interest};
 
 mod waker;
-mod context;
 mod task;
