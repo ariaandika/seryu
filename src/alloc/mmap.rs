@@ -5,6 +5,8 @@ use core::{fmt, ops, result};
 use genos::mem::mmap;
 use genos::{arch, sys};
 
+use crate::alloc::Allocator;
+
 pub type MmapError = sys::Error<arch::sys_mmap>;
 
 pub type Result<T, E = MmapError> = result::Result<T, E>;
@@ -78,5 +80,23 @@ impl<T> ops::DerefMut for Mmap<T> {
 impl<T: fmt::Debug> fmt::Debug for Mmap<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         T::fmt(self, f)
+    }
+}
+
+// ===== Allocator =====
+
+pub struct MmapAlloc;
+
+unsafe impl Allocator for MmapAlloc {
+    type Error = MmapError;
+
+    #[inline]
+    fn allocate<T>(&self) -> Result<NonNull<T>, Self::Error> {
+        mmap_anon()
+    }
+
+    #[inline]
+    unsafe fn deallocate<T>(&self, ptr: NonNull<T>) {
+        munmap(ptr.as_ptr());
     }
 }

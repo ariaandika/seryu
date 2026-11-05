@@ -1,6 +1,6 @@
 pub use alloc::Allocator;
 pub use brk::Brk;
-pub use mmap::{Mmap, PAGE_SIZE, Result};
+pub use mmap::{Mmap, MmapAlloc, PAGE_SIZE, Result};
 pub use error::{OutOfCapacity, OutOfMemory};
 pub use arena::Arena;
 pub use slab::Slab;
