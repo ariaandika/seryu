@@ -17,4 +17,4 @@ resolver = "3"
 members = ["example"]
 
 [workspace.dependencies]
-genos = { git = "https://github.com/ariaandika/genos.git", rev = "27d0be8", version = "0.1.0" }
+genos = { git = "https://github.com/ariaandika/genos.git", rev = "8dcf731", version = "0.1.0" }

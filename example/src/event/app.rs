@@ -10,6 +10,7 @@ use crate::task::TaskId;
 pub enum EventKind {
     Listener,
     Client(TaskId),
+    Signal,
 }
 
 impl EventData for EventKind {

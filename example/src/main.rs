@@ -7,7 +7,7 @@ use crate::error::Error;
 use crate::event::{EventKind, Polling};
 use crate::global::{Global, setup_global};
 use crate::http::{Request, ServerTask};
-use crate::os::Listener;
+use crate::os::{Listener, Signal};
 use crate::queue::Queue;
 
 // OS Abstraction
@@ -32,6 +32,7 @@ fn main() -> Result<(), Error> {
 
     let listener = Listener::bind_tcp([127, 0, 0, 1], 4040)?;
     let polling = Polling::new()?;
+    let signal = Signal::new()?;
 
     let arena = Arena::<_, { alloc::PAGE_SIZE }>::new(Brk)?;
     let mut events = Polling::event_buf(&arena)?;
@@ -39,6 +40,7 @@ fn main() -> Result<(), Error> {
     let mut server = ServerTask::new()?;
 
     polling.add(&listener, EventKind::Listener)?;
+    polling.add(&signal, EventKind::Signal)?;
 
     setup_global(&Global { poll: &polling });
 
@@ -58,6 +60,11 @@ fn main() -> Result<(), Error> {
                 Kind::Client(id) => {
                     if server.schedule_client(id, event) {
                         queue.push(id).expect("queue full");
+                    }
+                }
+                Kind::Signal => {
+                    if signal.read()?.is_some() {
+                        return Ok(());
                     }
                 }
             }
