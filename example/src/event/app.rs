@@ -1,6 +1,9 @@
 use core::mem;
 
-use crate::event::EventData;
+use seryu::alloc;
+use seryu::event::{Event, EventData};
+
+use crate::alloc::Owned;
 use crate::task::TaskId;
 
 // ===== EventKind =====
@@ -14,11 +17,17 @@ pub enum EventKind {
 }
 
 impl EventData for EventKind {
-    fn from_data(data: u64) -> Self {
-        unsafe { mem::transmute(data) }
+    fn from_raw(raw: u64) -> Self {
+        unsafe { mem::transmute(raw) }
     }
 
-    fn into_data(self) -> u64 {
+    fn into_raw(self) -> u64 {
         unsafe { mem::transmute(self) }
     }
 }
+
+// ===== EventBuf =====
+
+pub const EVENT_CAP: usize = alloc::PAGE_SIZE / 2 / size_of::<Event>();
+
+pub type EventBuf<A> = Owned<[mem::MaybeUninit<Event>; EVENT_CAP], A>;

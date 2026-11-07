@@ -17,10 +17,8 @@ impl<T, A: Allocator> Drop for Owned<T, A> {
     }
 }
 
-impl<T, A: Allocator> Owned<T, A> {
-    pub fn uninit_array<const S: usize>(
-        alloc: A,
-    ) -> Result<Owned<[MaybeUninit<T>; S], A>, A::Error> {
+impl<T, A: Allocator, const S: usize> Owned<[MaybeUninit<T>; S], A> {
+    pub fn uninit_array(alloc: A) -> Result<Self, A::Error> {
         Ok(Owned { ptr: alloc.allocate()?, alloc })
     }
 }

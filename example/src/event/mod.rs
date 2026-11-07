@@ -1,5 +1,3 @@
-pub use epoll::{Event, EventData, Polling};
-pub use app::EventKind;
+pub use app::{EventKind, EventBuf};
 
-mod epoll;
 mod app;

@@ -1,9 +1,10 @@
 use core::pin::Pin;
 
+use seryu::event::{self, Event};
 use seryu::os::Socket;
 
 use crate::error::Error;
-use crate::event::{Event, EventKind};
+use crate::event::EventKind;
 use crate::global;
 use crate::http::{ClientTask, Clients};
 use crate::task::{Interest, TaskId};
@@ -53,8 +54,8 @@ impl ServerTask {
         };
 
         let state = task.interest;
-        let want_rd = state.has(Interest::READ) & event.has_read();
-        let want_wr = state.has(Interest::WRITE) & event.has_write();
+        let want_rd = state.has(Interest::READ) & event.interest().has(event::Interest::READ);
+        let want_wr = state.has(Interest::WRITE) & event.interest().has(event::Interest::WRITE);
 
         // prevent double queues
         if state.has(Interest::QUEUE) {

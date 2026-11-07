@@ -2,10 +2,11 @@
 use core::task::{Context, Poll};
 
 use seryu::alloc::{Arena, Brk};
+use seryu::event::Epoll;
 use seryu::os::Socket;
 
 use crate::error::Error;
-use crate::event::{EventKind, Polling};
+use crate::event::{EventBuf, EventKind};
 use crate::global::{Global, setup_global};
 use crate::http::{Request, ServerTask};
 use crate::os::Signal;
@@ -32,11 +33,11 @@ fn main() -> Result<(), Error> {
     let _ = pg::connect();
 
     let listener = Socket::bind_tcp([127, 0, 0, 1], 4040)?;
-    let polling = Polling::new()?;
+    let polling = Epoll::new()?;
     let signal = Signal::new()?;
 
     let arena = Arena::<_, { alloc::PAGE_SIZE }>::new(Brk)?;
-    let mut events = Polling::event_buf(&arena)?;
+    let mut events = EventBuf::uninit_array(&arena)?;
     let mut queue = Queue::new(&arena)?;
     let mut server = ServerTask::new()?;
 
