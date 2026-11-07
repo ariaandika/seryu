@@ -2,10 +2,8 @@ use core::mem::MaybeUninit;
 use core::slice;
 use core::task::Poll;
 
-use genos::fd::AsFd;
-use genos::io;
-use seryu::error::ReadError;
 use seryu::h1;
+use seryu::os::{ReadError, Socket};
 
 use crate::alloc;
 use crate::error::Error;
@@ -48,21 +46,12 @@ impl ReadBuf {
     }
 
     /// Returns `is_eof`.
-    pub fn poll_read<Fd: AsFd>(&mut self, fd: &Fd) -> Poll<Result<bool, ReadError>> {
+    pub fn poll_read(&mut self, io: &Socket) -> Poll<Result<bool, ReadError>> {
         let buf = unsafe { self.buf.get_unchecked_mut(self.len..) };
-        match io::read(fd, buf) {
-            Ok(read) => {
-                self.len += read;
-                Poll::Ready(Ok(read == 0))
-            }
-            Err(err) => {
-                if err.code().is_retry() {
-                    Poll::Pending
-                } else {
-                    Poll::Ready(Err(err))
-                }
-            }
-        }
+        io.poll_read(buf).map_ok(|read| {
+            self.len += read;
+            read == 0
+        })
     }
 }
 

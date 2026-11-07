@@ -1,11 +1,10 @@
 use core::mem::MaybeUninit;
-use core::task::Poll;
+use core::task::{Poll, ready};
 
-use genos::fd::AsFd;
-use genos::{io, sys};
+use genos::sys;
 use seryu::bytes::BufMut;
-use seryu::error::WriteError;
 use seryu::h1;
+use seryu::os::{Socket, WriteError};
 
 use crate::alloc;
 use crate::error::Error;
@@ -31,26 +30,16 @@ impl WriteBuf {
         self.len = 0;
     }
 
-    pub fn poll_flush<Fd: AsFd>(&mut self, fd: &Fd) -> Poll<Result<(), WriteError>> {
+    pub fn poll_flush(&mut self, io: &Socket) -> Poll<Result<(), WriteError>> {
         let bytes = unsafe { self.buf.get_unchecked_mut(..self.len).assume_init_ref() };
         while let Some(bytes) = bytes.get(self.off..)
             && !bytes.is_empty()
         {
-            match io::write(fd, bytes) {
-                Ok(write) => {
-                    if write == 0 {
-                        return Poll::Ready(Err(WriteError::from(sys::ErrCode::ECONNABORTED)));
-                    }
-                    self.off += write
-                }
-                Err(err) => {
-                    return if err.code().is_retry() {
-                        Poll::Pending
-                    } else {
-                        Poll::Ready(Err(err))
-                    };
-                }
+            let write = ready!(io.poll_write(bytes))?;
+            if write == 0 {
+                return Poll::Ready(Err(WriteError::from(sys::ErrCode::ECONNABORTED)));
             }
+            self.off += write
         }
         self.clear();
         Poll::Ready(Ok(()))

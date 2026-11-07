@@ -2,9 +2,8 @@ use core::ffi::CStr;
 use core::task::{self, Poll, ready};
 use core::{fmt, mem};
 
-use genos::net::{self, Socket};
 use seryu::alloc::OutOfCapacity;
-use seryu::error::{ReadError, WriteError};
+use seryu::os::{ReadError, Socket, WriteError};
 use seryu::postgres::backend::{BackendType as B, Message};
 use seryu::postgres::{Decode, Encode, backend, frontend};
 
@@ -23,29 +22,17 @@ pub struct Postgres {
 impl Postgres {
     #[allow(unused)]
     pub fn connect_unix(path: &CStr) -> Result<Self, Error> {
-        let addr = net::SockAddrUn::from_path(path.into());
-        Self::connect(Socket::UNIX, addr.as_sockaddr(), addr.addrlen())
+        Self::new(Socket::connect_unix(path)?)
     }
 
     #[allow(unused)]
     pub fn connect_tcp(addr: [u8; 4], port: u16) -> Result<Self, Error> {
-        let addr = net::SockAddrIn::new(port.swap_bytes(), u32::from_ne_bytes(addr));
-        Self::connect(Socket::INET, addr.as_sockaddr(), addr.addrlen())
+        Self::new(Socket::connect_tcp(addr, port)?)
     }
 
-    fn connect(
-        sock: net::Family,
-        addr: &net::SockAddr,
-        addrlen: net::Socklen,
-    ) -> Result<Self, Error> {
-        // create socket
-        let socket = Socket::create(sock, Socket::STREAM, <_>::default())?;
-        socket.connect(addr, addrlen)?;
-
-        // allocate message buffer
+    fn new(socket: Socket) -> Result<Self, Error> {
         let read_buf = ReadBuf::new()?;
         let write_buf = WriteBuf::new()?;
-
         Ok(Self { socket, read_buf, write_buf })
     }
 }

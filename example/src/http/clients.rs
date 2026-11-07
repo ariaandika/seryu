@@ -1,7 +1,7 @@
 use core::mem::{self, ManuallyDrop, MaybeUninit};
 
-use genos::net::Socket;
 use seryu::alloc::OutOfCapacity;
+use seryu::os::Socket;
 
 use crate::alloc::{self, Mmap};
 use crate::http::ClientTask;

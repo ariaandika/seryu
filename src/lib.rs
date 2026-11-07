@@ -3,8 +3,9 @@
 #![allow(clippy::module_inception, clippy::new_without_default, clippy::len_without_is_empty)]
 
 pub mod alloc;
+pub mod os;
+
 pub mod bytes;
-pub mod error;
 mod fmt;
 mod matches;
 

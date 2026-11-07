@@ -2,10 +2,8 @@ use core::mem::MaybeUninit;
 use core::slice;
 use core::task::{Context, Poll};
 
-use genos::fd::AsFd;
-use genos::io;
 use seryu::bytes::Buf;
-use seryu::error::ReadError;
+use seryu::os::{ReadError, Socket};
 use seryu::postgres::DecodeError;
 use seryu::postgres::backend::Message;
 
@@ -47,12 +45,12 @@ impl<'a> Buf<'a> for &'a mut ReadBuf {
 
 impl ReadBuf {
     /// Returns `is_eof`.
-    pub fn poll_read_fd<Fd: AsFd>(
+    pub fn poll_read_fd(
         &mut self,
-        fd: &Fd,
+        io: &Socket,
         _cx: &mut Context<'_>,
     ) -> Poll<Result<bool, ReadError>> {
-        match self.read_fd_sync(fd) {
+        match self.read_fd_sync(io) {
             Ok(ok) => Poll::Ready(Ok(ok)),
             Err(err) => {
                 if err.code().is_retry() {
@@ -66,9 +64,11 @@ impl ReadBuf {
     }
 
     /// Returns `is_eof`.
-    pub fn read_fd_sync<Fd: AsFd>(&mut self, fd: &Fd) -> Result<bool, ReadError> {
+    pub fn read_fd_sync(&mut self, io: &Socket) -> Result<bool, ReadError> {
         let buf = unsafe { self.buf.get_unchecked_mut(self.len..) };
-        let read = io::read(fd, buf)?;
+        let Poll::Ready(read) = io.poll_read(buf)? else {
+            unreachable!("socket is nonblocking");
+        };
         self.len += read;
         Ok(read == 0)
     }

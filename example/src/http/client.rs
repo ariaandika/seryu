@@ -2,8 +2,8 @@ use core::mem::MaybeUninit;
 use core::pin::Pin;
 use core::task::{Context, Poll, ready};
 
-use genos::net::Socket;
 use seryu::alloc::MmapAlloc;
+use seryu::os::Socket;
 
 use crate::alloc;
 use crate::error::Error;

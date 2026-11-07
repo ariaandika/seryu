@@ -1,6 +1,6 @@
 use core::pin::Pin;
 
-use genos::net::Socket;
+use seryu::os::Socket;
 
 use crate::error::Error;
 use crate::event::{Event, EventKind};

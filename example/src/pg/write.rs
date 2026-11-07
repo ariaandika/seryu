@@ -1,11 +1,9 @@
 use core::mem::MaybeUninit;
 use core::task::{Context, Poll};
 
-use genos::fd::AsFd;
-use genos::io;
 use seryu::alloc::OutOfCapacity;
 use seryu::bytes::BufMut;
-use seryu::error::WriteError;
+use seryu::os::{Socket, WriteError};
 use seryu::postgres::Encode;
 
 use crate::alloc::{self, Mmap};
@@ -49,12 +47,12 @@ impl BufMut for &mut WriteBuf {
 
 impl WriteBuf {
     /// Flush buffer.
-    pub fn poll_flush<Fd: AsFd>(
+    pub fn poll_flush(
         &mut self,
-        fd: &Fd,
+        io: &Socket,
         _cx: &mut Context<'_>,
     ) -> Poll<Result<(), WriteError>> {
-        match self.flush_sync(fd) {
+        match self.flush_sync(io) {
             Ok(ok) => Poll::Ready(Ok(ok)),
             Err(err) => {
                 if err.code().is_retry() {
@@ -67,12 +65,15 @@ impl WriteBuf {
         }
     }
 
-    pub fn flush_sync<Fd: AsFd>(&mut self, fd: &Fd) -> Result<(), WriteError> {
+    pub fn flush_sync(&mut self, io: &Socket) -> Result<(), WriteError> {
         let buf = unsafe { self.buf.get_unchecked_mut(..self.len).assume_init_ref() };
         while let Some(bytes) = buf.get(self.off..)
             && !bytes.is_empty()
         {
-            self.off += io::write(fd, bytes)?;
+            let Poll::Ready(write) = io.poll_write(buf)? else {
+                unreachable!("socket is nonblocking");
+            };
+            self.off += write;
         }
         self.clear();
         Ok(())

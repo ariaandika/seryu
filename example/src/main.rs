@@ -1,13 +1,14 @@
 #![allow(clippy::module_inception)]
-use core::task::Context;
+use core::task::{Context, Poll};
 
 use seryu::alloc::{Arena, Brk};
+use seryu::os::Socket;
 
 use crate::error::Error;
 use crate::event::{EventKind, Polling};
 use crate::global::{Global, setup_global};
 use crate::http::{Request, ServerTask};
-use crate::os::{Listener, Signal};
+use crate::os::Signal;
 use crate::queue::Queue;
 
 // OS Abstraction
@@ -30,7 +31,7 @@ mod pg;
 fn main() -> Result<(), Error> {
     let _ = pg::connect();
 
-    let listener = Listener::bind_tcp([127, 0, 0, 1], 4040)?;
+    let listener = Socket::bind_tcp([127, 0, 0, 1], 4040)?;
     let polling = Polling::new()?;
     let signal = Signal::new()?;
 
@@ -53,7 +54,7 @@ fn main() -> Result<(), Error> {
             use EventKind as Kind;
             match event.data() {
                 Kind::Listener => {
-                    for socket in listener.accept() {
+                    while let Poll::Ready(socket) = listener.poll_accept()? {
                         server.create_task(socket)
                     }
                 }

@@ -2,7 +2,7 @@ use core::task::{self, Poll, ready};
 use core::{error, fmt, pin};
 
 use seryu::alloc::OutOfCapacity;
-use seryu::error::{ReadError, WriteError};
+use seryu::os::{ReadError, WriteError};
 use seryu::postgres::{backend, frontend};
 
 use crate::error::Error;
@@ -102,7 +102,7 @@ pub enum StartupError {
 impl error::Error for StartupError {}
 
 impl fmt::Display for StartupError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UnsupportedAuth(auth) => {
                 write!(f, "unsupported startup authentication")?;
