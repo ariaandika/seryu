@@ -1,73 +1,50 @@
-use core::pin::Pin;
+use core::task::Poll;
 
-use seryu::event::{self, Event};
 use seryu::os::Socket;
 
 use crate::error::Error;
 use crate::event::EventKind;
-use crate::global;
-use crate::http::{ClientTask, Clients};
-use crate::task::{Interest, TaskId};
+use crate::http::Clients;
+use crate::rt::Reactor;
 
 // ===== ServerTask =====
 
-pub struct ServerTask {
-    clients: Clients,
+pub struct Server<R: Reactor> {
+    reactor: R,
+    listener: Socket,
 }
 
-impl ServerTask {
-    pub fn new() -> Result<ServerTask, Error> {
-        Ok(Self { clients: Clients::new()? })
-    }
-
-    pub fn create_task(&mut self, socket: Socket) {
-        let _ = self.create_task_inner(socket);
-    }
-
-    fn create_task_inner(&mut self, socket: Socket) -> Result<(), Error> {
-        let event = EventKind::Client(self.clients.peek_id());
-        global::poll().add(&socket, event)?;
-        self.clients.create(socket)?;
-        Ok(())
-    }
-
-    pub fn delete_task(&mut self, id: TaskId) {
-        let Some(task) = self.clients.get_mut(id) else {
-            return;
-        };
-        let _ = global::poll().delete(&task.socket);
-        self.clients.delete(id.to_idx());
-    }
-
-    pub fn task_mut(&mut self, id: TaskId) -> Option<Pin<&mut ClientTask>> {
-        self.clients.get_mut(id).map(Pin::new)
+impl<R: Reactor> Drop for Server<R> {
+    fn drop(&mut self) {
+        let _ = self.reactor.delete(&self.listener);
     }
 }
 
-// ===== Scheduling =====
+impl<R: Reactor> Server<R> {
+    pub fn new(addr: [u8; 4], port: u16, reactor: R) -> Result<Self, Error> {
+        let listener = Socket::bind_tcp(addr, port)?;
+        reactor.add(&listener, EventKind::Listener)?;
+        Ok(Self { reactor, listener })
+    }
+}
 
-impl ServerTask {
-    /// Returns `true` if given task should be scheduled.
-    pub fn schedule_client(&mut self, id: TaskId, event: &Event) -> bool {
-        let Some(task) = self.clients.get_mut(id) else {
-            return false;
-        };
+// ===== Server Listener =====
 
-        let state = task.interest;
-        let want_rd = state.has(Interest::READ) & event.interest().has(event::Interest::READ);
-        let want_wr = state.has(Interest::WRITE) & event.interest().has(event::Interest::WRITE);
-
-        // prevent double queues
-        if state.has(Interest::QUEUE) {
-            return false;
+impl<R: Reactor> Server<R> {
+    pub fn poll<R2: Reactor>(&mut self, clients: &mut Clients<R2>) {
+        loop {
+            match self.listener.poll_accept() {
+                Poll::Ready(Ok(socket)) => {
+                    if clients.create(socket).is_err() {
+                        todo!("failed to create client task")
+                    }
+                }
+                Poll::Ready(Err(err)) => {
+                    eprintln!("{err}");
+                    break;
+                }
+                Poll::Pending => break,
+            }
         }
-
-        // prevent not interested event
-        if !(want_rd | want_wr) {
-            return false;
-        }
-
-        task.interest = state.unset(Interest::READ | Interest::WRITE) | Interest::QUEUE;
-        true
     }
 }

@@ -1,6 +1,6 @@
 // pub use pool::{MemoryPool, Page};
 pub use request::Request;
-pub use server::ServerTask;
+pub use server::Server;
 pub use client::ClientTask;
 pub use clients::Clients;
 
@@ -11,10 +11,12 @@ mod request;
 mod read;
 mod write;
 
-// Task
+// Future
 mod any;
-mod server;
-mod client;
 
-// Collections
+// Server
+mod server;
+
+// Client
+mod client;
 mod clients;

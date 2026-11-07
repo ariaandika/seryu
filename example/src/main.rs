@@ -1,14 +1,11 @@
 #![allow(clippy::module_inception)]
-use core::task::{Context, Poll};
+use core::task::Context;
 
 use seryu::alloc::{Arena, Brk};
-use seryu::event::Epoll;
-use seryu::os::Socket;
 
 use crate::error::Error;
-use crate::event::{EventBuf, EventKind};
-use crate::global::{Global, setup_global};
-use crate::http::{Request, ServerTask};
+use crate::event::{EpollHandle, EventBuf, EventKind};
+use crate::http::{Clients, Request, Server};
 use crate::os::Signal;
 use crate::queue::Queue;
 
@@ -18,7 +15,7 @@ mod error;
 mod os;
 
 // Shared Abstraction
-mod global;
+mod rt;
 mod task;
 
 // Global State
@@ -32,35 +29,29 @@ mod pg;
 fn main() -> Result<(), Error> {
     let _ = pg::connect();
 
-    let listener = Socket::bind_tcp([127, 0, 0, 1], 4040)?;
-    let polling = Epoll::new()?;
+    let poll = EpollHandle::new_static()?;
     let signal = Signal::new()?;
 
     let arena = Arena::<_, { alloc::PAGE_SIZE }>::new(Brk)?;
     let mut events = EventBuf::uninit_array(&arena)?;
     let mut queue = Queue::new(&arena)?;
-    let mut server = ServerTask::new()?;
 
-    polling.add(&listener, EventKind::Listener)?;
-    polling.add(&signal, EventKind::Signal)?;
+    let mut server = Server::new([127, 0, 0, 1], 4040, poll.clone())?;
+    let mut clients = Clients::new(poll.clone())?;
 
-    setup_global(&Global { poll: &polling });
+    poll.add(&signal, EventKind::Signal)?;
 
     loop {
         // ===== Wait for Events =====
-        let events = polling.wait(&mut *events)?;
+        let events = poll.wait(&mut *events)?;
 
         // ===== Schedule Tasks =====
         for event in events {
             use EventKind as Kind;
             match event.data() {
-                Kind::Listener => {
-                    while let Poll::Ready(socket) = listener.poll_accept()? {
-                        server.create_task(socket)
-                    }
-                }
+                Kind::Listener => server.poll(&mut clients),
                 Kind::Client(id) => {
-                    if server.schedule_client(id, event) {
+                    if clients.schedule_client(id, event) {
                         queue.push(id).expect("queue full");
                     }
                 }
@@ -74,7 +65,7 @@ fn main() -> Result<(), Error> {
 
         // ===== Task Execution =====
         for id in queue.drain() {
-            let Some(task) = server.task_mut(id) else {
+            let Some(task) = clients.get_mut(id) else {
                 // dangling task id in scheduler
                 continue;
             };
@@ -87,7 +78,7 @@ fn main() -> Result<(), Error> {
                 continue;
             }
 
-            server.delete_task(id);
+            clients.delete(id);
         }
     }
 }

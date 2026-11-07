@@ -3,12 +3,12 @@ use core::pin::Pin;
 use core::task::{Context, Poll, ready};
 
 use seryu::alloc::MmapAlloc;
+use seryu::event::Interest;
 use seryu::os::Socket;
 
 use crate::alloc;
 use crate::error::Error;
 use crate::http::any::AnyFuture;
-use crate::task::Interest;
 
 // ===== Task =====
 
@@ -51,7 +51,6 @@ impl Future for ClientTask {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let me = unsafe { self.get_unchecked_mut() };
-        me.interest = me.interest.unset(Interest::QUEUE);
 
         loop {
             match &mut me.phase {
@@ -69,7 +68,7 @@ impl Future for ClientTask {
                             }
                             Poll::Pending => {
                                 // register read interest
-                                me.interest |= Interest::READ;
+                                me.interest = me.interest | Interest::READ;
                             }
                         },
                     }
@@ -82,7 +81,7 @@ impl Future for ClientTask {
                 Phase::WriteResponse => {
                     if me.write_buf.poll_flush(&me.socket)?.is_pending() {
                         // TODO: sync "write interest" with "epoll write interest"
-                        me.interest |= Interest::WRITE;
+                        me.interest = me.interest | Interest::WRITE;
                         return Poll::Pending;
                     }
                     me.phase = Phase::ReadRequest;
