@@ -1,13 +1,10 @@
 #![allow(clippy::module_inception)]
-use core::task::Context;
-
 use seryu::alloc::{Arena, Brk};
 
 use crate::error::Error;
 use crate::event::{EpollHandle, EventBuf, EventKind};
 use crate::http::{Clients, Request, Server};
 use crate::os::Signal;
-use crate::queue::Queue;
 
 // OS Abstraction
 mod alloc;
@@ -20,7 +17,6 @@ mod task;
 
 // Global State
 mod event;
-mod queue;
 
 // Application Domain
 mod http;
@@ -34,7 +30,6 @@ fn main() -> Result<(), Error> {
 
     let arena = Arena::<_, { alloc::PAGE_SIZE }>::new(Brk)?;
     let mut events = EventBuf::uninit_array(&arena)?;
-    let mut queue = Queue::new(&arena)?;
 
     let mut server = Server::new([127, 0, 0, 1], 4040, poll.clone())?;
     let mut clients = Clients::new(poll.clone())?;
@@ -50,35 +45,13 @@ fn main() -> Result<(), Error> {
             use EventKind as Kind;
             match event.data() {
                 Kind::Listener => server.poll(&mut clients),
-                Kind::Client(id) => {
-                    if clients.schedule_client(id, event) {
-                        queue.push(id).expect("queue full");
-                    }
-                }
+                Kind::Client(id) => clients.poll(id, event),
                 Kind::Signal => {
                     if signal.read()?.is_some() {
                         return Ok(());
                     }
                 }
             }
-        }
-
-        // ===== Task Execution =====
-        for id in queue.drain() {
-            let Some(task) = clients.get_mut(id) else {
-                // dangling task id in scheduler
-                continue;
-            };
-
-            let waker = task::waker(&*task);
-            let mut cx = Context::from_waker(&waker);
-
-            // poll the task
-            if task.poll(&mut cx).is_pending() {
-                continue;
-            }
-
-            clients.delete(id);
         }
     }
 }

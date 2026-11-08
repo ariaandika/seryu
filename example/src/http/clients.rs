@@ -1,5 +1,6 @@
 use core::mem::{self, ManuallyDrop, MaybeUninit};
 use core::pin::Pin;
+use core::task::Context;
 
 use seryu::alloc::OutOfCapacity;
 use seryu::event::{Event, Interest};
@@ -10,7 +11,7 @@ use crate::error::Error;
 use crate::event::EventKind;
 use crate::http::ClientTask;
 use crate::rt::Reactor;
-use crate::task::TaskId;
+use crate::task::{self, TaskId};
 
 const TASKS_CAP: usize = 16;
 
@@ -83,26 +84,32 @@ impl<R: Reactor> Clients<R> {
             .get_mut(id.to_idx())
             .map(|t| Pin::new(t.assert_task_mut()))
     }
+}
 
-    /// Returns `true` if given task should be scheduled.
-    pub fn schedule_client(&mut self, id: TaskId, event: &Event) -> bool {
-        let Some(task) = self.get_mut(id) else {
-            return false;
+// ===== Future =====
+
+impl<R: Reactor> Clients<R> {
+    pub fn poll(&mut self, id: TaskId, event: &Event) {
+        let Some(mut pin_task) = self.get_mut(id) else {
+            return;
         };
-        let task = task.get_mut();
+        let task = pin_task.as_mut().get_mut();
         let interest = task.interest & event.interest();
 
-        let want_rd = interest.has(Interest::READ);
-        let want_wr = interest.has(Interest::WRITE);
-
         // prevent not interested event
-        if !(want_rd | want_wr) {
-            return false;
+        if !(interest.has(Interest::READ) | interest.has(Interest::WRITE)) {
+            return;
         }
 
-        let unset = (Interest::READ ^ interest) | (Interest::WRITE ^ interest);
-        task.interest = Interest::default() | unset;
-        true
+        // unset the emitted event
+        task.interest = (task.interest & event.interest()) ^ event.interest();
+
+        let waker = task::waker(task);
+        let mut cx = Context::from_waker(&waker);
+
+        if pin_task.poll(&mut cx).is_ready() {
+            self.delete(id)
+        }
     }
 }
 
