@@ -1,44 +1,39 @@
 use core::task::Poll;
 
+use genos::fd::{AsFd, BorrowedFd};
 use seryu::os::Socket;
 
 use crate::error::Error;
-use crate::event::EventKind;
-use crate::http::Clients;
-use crate::rt::Reactor;
 
 // ===== ServerTask =====
 
-pub struct Server<R: Reactor> {
-    reactor: R,
+pub struct Server {
     listener: Socket,
 }
 
-impl<R: Reactor> Drop for Server<R> {
-    fn drop(&mut self) {
-        let _ = self.reactor.delete(&self.listener);
+impl AsFd for Server {
+    fn as_fd(&self) -> BorrowedFd<'_> {
+        self.listener.as_fd()
     }
 }
 
-impl<R: Reactor> Server<R> {
-    pub fn new(addr: [u8; 4], port: u16, reactor: R) -> Result<Self, Error> {
-        let listener = Socket::bind_tcp(addr, port)?;
-        reactor.add(&listener, EventKind::Listener)?;
-        Ok(Self { reactor, listener })
+impl Server {
+    pub fn new(addr: [u8; 4], port: u16) -> Result<Self, Error> {
+        Ok(Self { listener: Socket::bind_tcp(addr, port)? })
     }
 }
 
 // ===== Server Listener =====
 
-impl<R: Reactor> Server<R> {
-    pub fn poll<R2: Reactor>(&mut self, clients: &mut Clients<R2>) {
+pub trait Spawner {
+    fn spawn(&mut self, socket: Socket);
+}
+
+impl Server {
+    pub fn poll<S: Spawner>(&mut self, mut spawner: S) {
         loop {
             match self.listener.poll_accept() {
-                Poll::Ready(Ok(socket)) => {
-                    if clients.create(socket).is_err() {
-                        todo!("failed to create client task")
-                    }
-                }
+                Poll::Ready(Ok(socket)) => spawner.spawn(socket),
                 Poll::Ready(Err(err)) => {
                     eprintln!("{err}");
                     break;

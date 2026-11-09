@@ -1,44 +1,47 @@
 #![allow(clippy::module_inception)]
+use core::pin;
+
 use seryu::alloc::{Arena, Brk};
 
+use crate::app::{EventBuf, EventKind, GlobalRt, Rt};
 use crate::error::Error;
-use crate::event::{EpollHandle, EventBuf, EventKind};
 use crate::http::{Clients, Request, Server};
 use crate::os::Signal;
 
-// OS Abstraction
+// OS
 mod alloc;
 mod error;
 mod os;
 
-// Shared Abstraction
-mod rt;
-mod task;
+// shared
+mod shared;
 
-// Global State
-mod event;
-
-// Application Domain
+// protocol
 mod http;
 mod pg;
+
+// application
+mod app;
 
 fn main() -> Result<(), Error> {
     let _ = pg::connect();
 
-    let poll = EpollHandle::new_static()?;
-    let signal = Signal::new()?;
-
     let arena = Arena::<_, { alloc::PAGE_SIZE }>::new(Brk)?;
     let mut events = EventBuf::uninit_array(&arena)?;
 
-    let mut server = Server::new([127, 0, 0, 1], 4040, poll.clone())?;
-    let mut clients = Clients::new(poll.clone())?;
+    let pin = pin::pin!(Rt::new()?);
+    pin.setup();
 
-    poll.add(&signal, EventKind::Signal)?;
+    let signal = Signal::new()?;
+    let mut server = Server::new([127, 0, 0, 1], 4040)?;
+    let mut clients = Clients::<GlobalRt>::new()?;
+
+    GlobalRt.poll.add(&signal, EventKind::Signal)?;
+    GlobalRt.poll.add(&server, EventKind::Listener)?;
 
     loop {
         // ===== Wait for Events =====
-        let events = poll.wait(&mut *events)?;
+        let events = GlobalRt.poll.wait(&mut *events)?;
 
         // ===== Schedule Tasks =====
         for event in events {

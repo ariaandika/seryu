@@ -1,4 +1,4 @@
-use core::mem::{self, ManuallyDrop, MaybeUninit};
+use core::mem::{ManuallyDrop, MaybeUninit};
 use core::pin::Pin;
 use core::task::Context;
 
@@ -8,39 +8,50 @@ use seryu::os::Socket;
 
 use crate::alloc::{self, Mmap};
 use crate::error::Error;
-use crate::event::EventKind;
-use crate::http::ClientTask;
-use crate::rt::Reactor;
-use crate::task::{self, TaskId};
+use crate::http::{ClientTask, Spawner};
+use crate::shared::{self, Global, TaskId};
 
 const TASKS_CAP: usize = 16;
 
-pub struct Clients<R> {
+// ===== Hooks =====
+
+pub trait Hooks {
+    fn added(&mut self, id: TaskId, task: &ClientTask);
+
+    fn removed(&mut self, id: TaskId, task: &ClientTask);
+}
+
+// ===== Clients =====
+
+pub struct Clients<H> {
     tasks: Mmap<[Task; TASKS_CAP]>,
     len: usize,
     last: usize,
-    reactor: R,
+    hooks: H,
 }
 
-impl<R: Reactor> Clients<R> {
-    pub fn new(reactor: R) -> alloc::Result<Self> {
+impl<H: Hooks + Global> Clients<H> {
+    pub fn new() -> alloc::Result<Self> {
+        Self::from_parts(H::global())
+    }
+}
+
+impl<H: Hooks> Clients<H> {
+    pub fn from_parts(hooks: H) -> alloc::Result<Self> {
         // SAFETY: `Task` is valid with zeroed byte-pattern
         let tasks = unsafe { Mmap::zeroed()? };
-        Ok(Self { tasks, len: 0, last: 0, reactor })
+        Ok(Self { tasks, len: 0, last: 0, hooks })
     }
 
-    pub fn create(&mut self, socket: Socket) -> Result<usize, Error> {
+    pub fn create(&mut self, socket: Socket) -> Result<(), Error> {
         let Some(task) = self.tasks.get_mut(self.last) else {
             return Err(OutOfCapacity.into());
         };
-
-        // reactor synchronization
-        let data = EventKind::Client(TaskId::from_idx(self.last));
-        self.reactor.add(&socket, data)?;
+        let new_id = TaskId::from_idx(self.last);
 
         assert!(task.is_none());
 
-        let next = if self.last == self.len {
+        self.last = if self.last == self.len {
             // appending
             self.len += 1;
             self.len
@@ -49,13 +60,15 @@ impl<R: Reactor> Clients<R> {
             // SAFETY: `task.is_none()`
             unsafe { task.metadata() }
         };
+
         // SAFETY: `task.is_none()`
         let slot = unsafe { task.as_task_uninit() };
-        ClientTask::initialize(socket, slot);
+        let client = ClientTask::initialize(socket, slot);
+        self.hooks.added(new_id, client);
 
-        assert!(task.is_some());
+        debug_assert!(task.is_some());
 
-        Ok(mem::replace(&mut self.last, next))
+        Ok(())
     }
 
     pub fn delete(&mut self, id: TaskId) {
@@ -63,18 +76,17 @@ impl<R: Reactor> Clients<R> {
         let Some(slot) = self.tasks.get_mut(idx) else {
             return;
         };
-        if slot.is_none() {
-            return;
-        }
+
+        assert!(slot.is_some());
 
         // SAFETY: `slot.is_some()`
         let task = unsafe { slot.task_mut() };
-
-        // reactor synchronization
-        let _ = self.reactor.delete(&task.socket);
+        self.hooks.removed(id, task);
 
         // SAFETY: `slot.is_some()`
         unsafe { slot.drop_in_place(self.last) };
+
+        debug_assert!(slot.is_none());
 
         self.last = idx;
     }
@@ -86,9 +98,15 @@ impl<R: Reactor> Clients<R> {
     }
 }
 
+impl<H: Hooks> Spawner for &mut Clients<H> {
+    fn spawn(&mut self, socket: Socket) {
+        Clients::create(*self, socket).expect("failed to create client");
+    }
+}
+
 // ===== Future =====
 
-impl<R: Reactor> Clients<R> {
+impl<H: Hooks> Clients<H> {
     pub fn poll(&mut self, id: TaskId, event: &Event) {
         let Some(mut pin_task) = self.get_mut(id) else {
             return;
@@ -104,7 +122,7 @@ impl<R: Reactor> Clients<R> {
         // unset the emitted event
         task.interest = (task.interest & event.interest()) ^ event.interest();
 
-        let waker = task::waker(task);
+        let waker = shared::waker(task);
         let mut cx = Context::from_waker(&waker);
 
         if pin_task.poll(&mut cx).is_ready() {

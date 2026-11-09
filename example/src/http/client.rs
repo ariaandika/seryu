@@ -31,15 +31,16 @@ enum Phase {
 }
 
 impl ClientTask {
-    pub(super) fn initialize(socket: Socket, me: &mut MaybeUninit<Self>) {
+    pub(super) fn initialize(socket: Socket, out: &mut MaybeUninit<Self>) -> &mut Self {
         unsafe {
-            let me = me.as_mut_ptr();
+            let me = out.as_mut_ptr();
             debug_assert!(me.is_aligned());
             (&raw mut (*me).phase).write(Phase::ReadRequest);
             (&raw mut (*me).interest).write(Interest::READ);
             (&raw mut (*me).socket).write(socket);
             (*me).read_buf.clear();
             (*me).write_buf.clear();
+            out.assume_init_mut()
         }
     }
 }
